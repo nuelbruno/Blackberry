@@ -1,0 +1,30 @@
+import bb.cascades 1.0
+import bb.system 1.0
+import "CommonStringValue.js" as CommonString
+
+Container {
+    property alias mSystemDialogBody: myQmlDialog.body
+    property alias mSystenDialogId: myQmlDialog
+    property alias mSystemDialogTitle : myQmlDialog.title
+    property alias myQmlDialogLabelConfirm: myQmlDialog.confirmButton
+    signal closePage()
+    onCreationCompleted: {
+        myQmlDialog.cancelButton.label = undefined
+        myQmlDialog.confirmButton.label = qsTr(_MOL.getValueFor("mLanguageCode", "en")=="en"?"Ok":"موافق") + Retranslate.onLanguageChanged
+        
+    }
+    attachedObjects: [
+        SystemDialog {
+            id: myQmlDialog
+            title: qsTr("MOL")+Retranslate.onLanguageChanged
+            body: qsTr("") + Retranslate.onLanguageChanged
+            property NavigationPane mNavigationPane
+            onFinished: {
+                var x = result;
+                if (x == SystemUiResult.ConfirmButtonSelection) {
+                    closePage()
+                } 
+            }
+        }
+    ]
+}

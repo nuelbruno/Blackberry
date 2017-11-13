@@ -1,0 +1,74 @@
+import bb.cascades 1.0
+
+Container {
+    horizontalAlignment: HorizontalAlignment.Fill
+    background: mainBackground.imagePaint
+    preferredWidth: 768
+    id: list_container
+    onCreationCompleted: {
+        var mLanguageCode = list_container.ListItem.view.setLanguageCode();
+        if (mLanguageCode == "en") {
+            mStackLayoutRow.orientation = LayoutOrientation.LeftToRight
+            mLabelTitle.text = qsTr(ListItemData.title)
+            
+        } else {
+            mStackLayoutRow.orientation = LayoutOrientation.RightToLeft
+            mLabelTitle.text = qsTr(ListItemData.title_ar)
+        }
+
+    }
+
+    layout: DockLayout {
+
+    }
+    Container {
+        horizontalAlignment: HorizontalAlignment.Fill
+        layout: StackLayout {
+            id: mStackLayoutRow
+            orientation: LayoutOrientation.LeftToRight
+
+        }
+        Container {
+            preferredHeight: 100
+            preferredWidth: 100
+            background: imageBackground.imagePaint
+            layout: DockLayout {
+
+            }
+            ImageView {
+                verticalAlignment: VerticalAlignment.Center
+                horizontalAlignment: HorizontalAlignment.Center
+                id: mImageViewIcon
+                imageSource: "asset:///images/etasheel/work_permitstatus_icon.png"
+            }
+        }
+
+        Container {
+            id: mContainerLabel
+            horizontalAlignment: HorizontalAlignment.Fill
+            verticalAlignment: VerticalAlignment.Center
+            leftPadding: 20
+            rightPadding: 20
+            MOLLabel {
+                id: mLabelTitle
+            }
+
+        }
+    }
+    Container {
+        verticalAlignment: VerticalAlignment.Bottom
+        preferredHeight: 1
+        preferredWidth: 768
+        background: Color.White
+    }
+    attachedObjects: [
+        ImagePaintDefinition {
+            id: mainBackground
+            imageSource: "asset:///images/common/list_row_bg.png"
+        },
+        ImagePaintDefinition {
+            id: imageBackground
+            imageSource: "asset:///images/common/list_icon_bg.png"
+        }
+    ]
+}

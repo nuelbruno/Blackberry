@@ -1,0 +1,31 @@
+import bb.cascades 1.0
+import bb.system 1.0
+
+//    }
+
+//    property alias hintText : txtCommonValidate.hintText;
+TextField {
+    id: txtCommonValidate
+    hintText: qsTr("")
+    //        inputMode: TextFieldInputMode.NumbersAndPunctuation
+    onTextChanging: {
+
+        numberValidateForm(txtCommonValidate.text)
+    }
+
+    function numberValidateForm(number) {
+        var numbers = /^[0-9]+$/;
+        var str = txtCommonValidate.text
+        if (! str.match(numbers)) {
+            var size = txtCommonValidate.text.length
+            txtCommonValidate.text = txtCommonValidate.text.substr(0, size - 1);
+
+        } else {
+            if (txtCommonValidate.text.length > 16) txtCommonValidate.text = txtCommonValidate.text.substr(0, 16);
+        }
+    }
+    //
+    function getTextAreaId() {
+        return txtCommonValidate;
+    }
+}

@@ -1,0 +1,57 @@
+import bb.cascades 1.0
+
+Container {
+    id: mMainContainer
+    property alias defaultImage: mImageButton.defaultImageSource
+    property alias pressedImage: mImageButton.pressedImageSource
+    property alias textValue: mTextView.text
+
+    signal click()
+    layout: DockLayout {
+    }
+
+    leftMargin: 15
+    topPadding: 15
+    ImageButton {
+        defaultImageSource: "asset:///images/home/informationbtn.png"
+        pressedImageSource: "asset:///images/home/informationbtn.png"
+        horizontalAlignment: HorizontalAlignment.Center
+        id: mImageButton
+        onClicked: {
+            click();
+        }
+        onTouch: {
+            if (event.isDown()) {
+                mTextView.textStyle.color = Color.White
+            } else if (event.isUp()) {
+                mTextView.textStyle.color = Color.Black
+            } else if (event.isCancel()) {
+                mTextView.textStyle.color = Color.Black
+            }
+
+        }
+    }
+
+    Container {
+        topPadding: 20
+        horizontalAlignment: HorizontalAlignment.Center
+        Label {
+            text: qsTr("Done")
+            id: mTextView
+            horizontalAlignment: HorizontalAlignment.Center
+            multiline: true
+            textStyle {
+                base: SystemDefaults.TextStyles.TitleText
+                color: Color.Black
+                fontSize: FontSize.XXSmall
+                textAlign: TextAlign.Center
+            }
+            onTouch: {
+                if (event.isUp()) {
+                    click();
+                }
+            }
+        }
+    }
+
+}

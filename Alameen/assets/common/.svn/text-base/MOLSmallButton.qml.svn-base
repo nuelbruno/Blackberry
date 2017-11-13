@@ -1,0 +1,48 @@
+import bb.cascades 1.0
+
+Container {
+    id: mMainContainer
+    property alias mMainContainer: mMainContainer.horizontalAlignment
+    property alias mImageSource: mButtonBG.imageSource
+    property alias mTextValue: mTextValue.text
+    signal click()
+    layout: DockLayout {
+    }
+    Container {
+        preferredHeight: 70
+        preferredWidth: 200
+        topPadding: 10.0
+        horizontalAlignment: HorizontalAlignment.Center
+        verticalAlignment: VerticalAlignment.Center
+        id: mTouchContainer
+        background: mButtonBG.imagePaint
+        attachedObjects: [
+            ImagePaintDefinition {
+                id: mButtonBG
+            }
+        ]
+
+        onTouch: {
+            if (event.isDown()) {
+                mTextValue.textStyle.color = Color.Gray
+            }else if(event.isUp()){
+                mTextValue.textStyle.color = Color.White
+                click()
+            }
+        }
+        Label {
+            text: qsTr("Submit")
+            id: mTextValue
+            horizontalAlignment: HorizontalAlignment.Center
+            verticalAlignment: VerticalAlignment.Center
+            textStyle {
+                base: SystemDefaults.TextStyles.TitleText
+                color: Color.White
+                fontSize: FontSize.Small
+                textAlign: TextAlign.Center
+                
+            }
+        }
+    }
+
+}

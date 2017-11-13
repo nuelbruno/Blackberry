@@ -1,0 +1,83 @@
+K 25
+svn:wc:ra_dav:version-url
+V 45
+/MOLBB10/!svn/ver/216/trunk/MOL/assets/common
+END
+MOLSmallButton.qml
+K 25
+svn:wc:ra_dav:version-url
+V 64
+/MOLBB10/!svn/ver/124/trunk/MOL/assets/common/MOLSmallButton.qml
+END
+CommonStringValue.js
+K 25
+svn:wc:ra_dav:version-url
+V 64
+/MOLBB10/!svn/ver/3/trunk/MOL/assets/common/CommonStringValue.js
+END
+MOLTopImage.qml
+K 25
+svn:wc:ra_dav:version-url
+V 61
+/MOLBB10/!svn/ver/233/trunk/MOL/assets/common/MOLTopImage.qml
+END
+MOITextArea.qml
+K 25
+svn:wc:ra_dav:version-url
+V 59
+/MOLBB10/!svn/ver/3/trunk/MOL/assets/common/MOITextArea.qml
+END
+LoadingDialog.qml
+K 25
+svn:wc:ra_dav:version-url
+V 61
+/MOLBB10/!svn/ver/3/trunk/MOL/assets/common/LoadingDialog.qml
+END
+ShowSystemDialog.qml
+K 25
+svn:wc:ra_dav:version-url
+V 66
+/MOLBB10/!svn/ver/481/trunk/MOL/assets/common/ShowSystemDialog.qml
+END
+MOLTitleBar.qml
+K 25
+svn:wc:ra_dav:version-url
+V 60
+/MOLBB10/!svn/ver/72/trunk/MOL/assets/common/MOLTitleBar.qml
+END
+Common_row.qml
+K 25
+svn:wc:ra_dav:version-url
+V 60
+/MOLBB10/!svn/ver/481/trunk/MOL/assets/common/Common_row.qml
+END
+MOLBackground.qml
+K 25
+svn:wc:ra_dav:version-url
+V 61
+/MOLBB10/!svn/ver/3/trunk/MOL/assets/common/MOLBackground.qml
+END
+MOLLabel.qml
+K 25
+svn:wc:ra_dav:version-url
+V 58
+/MOLBB10/!svn/ver/407/trunk/MOL/assets/common/MOLLabel.qml
+END
+ShowSystemToast.qml
+K 25
+svn:wc:ra_dav:version-url
+V 63
+/MOLBB10/!svn/ver/3/trunk/MOL/assets/common/ShowSystemToast.qml
+END
+MOLHomeButton.qml
+K 25
+svn:wc:ra_dav:version-url
+V 62
+/MOLBB10/!svn/ver/97/trunk/MOL/assets/common/MOLHomeButton.qml
+END
+MOLButton.qml
+K 25
+svn:wc:ra_dav:version-url
+V 58
+/MOLBB10/!svn/ver/97/trunk/MOL/assets/common/MOLButton.qml
+END

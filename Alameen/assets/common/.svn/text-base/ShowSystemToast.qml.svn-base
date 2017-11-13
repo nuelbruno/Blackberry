@@ -1,0 +1,19 @@
+import bb.cascades 1.0
+import bb.system 1.0
+import "CommonStringValue.js" as CommonString
+
+Container {
+    property alias mSystemToastBody: myQmlToast.body
+    property alias mSystenToastId: myQmlToast
+    onCreationCompleted: {
+    }
+    attachedObjects: [
+        SystemToast {
+
+            id: myQmlToast
+            body: qsTr(CommonString.toast_message)
+            //            button.label: "Undo"
+//                        button.enabled: true
+        }
+    ]
+}

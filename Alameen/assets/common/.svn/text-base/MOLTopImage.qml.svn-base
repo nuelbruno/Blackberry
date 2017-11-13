@@ -1,0 +1,12 @@
+import bb.cascades 1.0
+
+Container {
+    horizontalAlignment: HorizontalAlignment.Fill
+    verticalAlignment: VerticalAlignment.Center
+    property alias myImageSource : mImageView.imageSource
+    ImageView {
+        id:mImageView
+        horizontalAlignment: HorizontalAlignment.Fill
+        scalingMethod: ScalingMethod.AspectFill
+    }
+}

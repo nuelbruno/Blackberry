@@ -1,0 +1,14 @@
+import bb.cascades 1.0
+
+Label {
+    id: txtCommon
+    text: qsTr("")
+    multiline: true
+    verticalAlignment: VerticalAlignment.Center
+    
+    textStyle {
+//        textAlign: TextAlign.Left
+        base: SystemDefaults.TextStyles.SubtitleText
+//        color: Color.create("#FFFFFF")
+    }
+}

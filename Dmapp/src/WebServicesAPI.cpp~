@@ -1,0 +1,3234 @@
+/*
+ * WebServicesAPI.cpp
+ *
+ *  Created on: 05-Sep-2013
+ *      Author: Rahul
+ */
+#include "WebServicesAPI.h"
+#include "stdio.h"
+#include <bb/cascades/QmlDocument>
+#include <bb/cascades/AbstractPane>
+#include <bb/cascades/ListView>
+#include <math.h>
+#include <string.h>
+#include <bb/cascades/Application>
+#include "PoiData.h"
+#include <bb/UIToolkitSupport>
+using namespace bb::cascades;
+using namespace bb::data;
+using namespace QtMobilitySubset;
+using namespace bb::cascades::maps;
+using namespace bb::platform::geo;
+
+WebServicesAPI::WebServicesAPI(QObject* parent) :
+		QObject(parent), m_succeeded(false), m_active(false), m_modelImageList(
+				new QListDataModel<QObject*>()) {
+	searchAddress = QGeoAddress();
+	mMarker = Marker();
+	mPinTypeMultiple = 0;
+	mPinTypeEntrance = 1;
+	mPinTypeEntranceSelected = 2;
+	mPinTypeSingle = 3;
+	mPinTypeRoutePoint = 4;
+
+	mWSHost = "www.makani.ae";
+	mWSPrefix = "/MakaniWCFService_ActivityLog/service.svc";
+	mTockenID = "54F000E53AA3DB91BB938B274D6C3A18";
+
+	mMapData = new MapData();
+
+	request = QNetworkRequest();
+	mm_model = new GroupDataModel();
+	mm_modelBuiding = new GroupDataModel();
+	mm_modelCommunity = new GroupDataModel();
+	mm_modelStreet = new GroupDataModel();
+	mm_modelcategory = new GroupDataModel();
+	mm_modelservice = new GroupDataModel();
+	mm_modelpoinearby = new QListDataModel<QObject*>();
+	myMapView = new MapView();
+	minfo = new bb::ApplicationInfo(parent);
+	mNetworkAccessManager = new QNetworkAccessManager(this);
+	mm_model->setGrouping(ItemGrouping::None);
+	mm_modelBuiding->setGrouping(ItemGrouping::None);
+	mm_modelCommunity->setGrouping(ItemGrouping::None);
+	mm_modelStreet->setGrouping(ItemGrouping::None);
+	mm_modelcategory->setGrouping(ItemGrouping::None);
+
+	mm_modelservice->setGrouping(ItemGrouping::None);
+	m_modelImageList->setParent(this);
+	listCategory = new SystemListDialog(QString::null, QString::null);
+	listService = new SystemListDialog(QString::null, QString::null);
+
+	qmlRegisterType<PoiData>();
+
+	connect(&m_soap, SIGNAL(responseReady()), SLOT(onServiceResponse()));
+	connect(&m_soap_POIAutoComplete, SIGNAL(responseReady()),
+			SLOT(onServiceResponsePOIAutoComplete()));
+	connect(mNetworkAccessManager, SIGNAL(finished(QNetworkReply*)), this,
+			SLOT(requestFinished(QNetworkReply*)));
+
+	startGPS();
+
+}
+/*
+ *  A new value is saved to the application settings object.
+ *  @param objectName Identifier to set in persistance storage.
+ *  @param inputValue value to be stored in persistance storage.
+ */
+void WebServicesAPI::saveValueFor(const QString &objectName,
+		const QString &inputValue) {
+	QSettings settings;
+	settings.setValue(objectName, QVariant(inputValue));
+}
+/*
+ *  Retrieve the value stored in persistance  settings object.
+ *  @param objectName Identifier to get value from  persistance storage.
+ *  @param defaultValue If no value has been saved return the specified default value.
+ */
+QString WebServicesAPI::getValueFor(const QString &objectName,
+		const QString &defaultValue) {
+	QSettings settings;
+	if (settings.value(objectName).isNull()) {
+		return defaultValue;
+	}
+	return settings.value(objectName).toString();
+}
+
+QString WebServicesAPI::dateFormate(QString mData) {
+
+	QString leftSide = mData.left(10);
+	QDateTime mdate = QDateTime::fromString(leftSide, "yyyy-MM-dd");
+	mDateValue = mdate.toString("dd/MM/yyyy");
+	return mDateValue;
+
+}
+
+double WebServicesAPI::degree2radious(double degree) {
+
+	return degree * (3.14 / 180);
+}
+
+double WebServicesAPI::getDistanceFromLatLonInKm(double lat1, double lon1,
+		double lat2, double lon2) {
+
+	int R = 6371; // Radius of the earth in km
+	double dLat = degree2radious(lat2 - lat1); // deg2rad below
+	double dLon = degree2radious(lon2 - lon1);
+	double a = sin(dLat / 2) * sin(dLat / 2)
+			+ cos(degree2radious(lat1)) * cos(degree2radious(lat2))
+					* sin(dLon / 2) * sin(dLon / 2);
+	double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+	double d = R * c; // Distance in km
+	return d;
+
+}
+
+void WebServicesAPI::positionUpdated(QGeoPositionInfo geoPositionInfo) {
+
+
+	if (geoPositionInfo.isValid()) {
+
+		// Save the position information into a member variable
+		myPositionInfo = geoPositionInfo;
+
+		// Get the current location as latitude and longitude
+		QGeoCoordinate geoCoordinate = geoPositionInfo.coordinate();
+		double latitude = geoCoordinate.latitude();
+		double longitude = geoCoordinate.longitude();
+
+
+		// Get and Set the current location as latitude and longitude
+
+		QString strLatitude = QString("%1").arg(latitude);
+		QString strLongitude = QString("%1").arg(longitude);
+
+		saveValueFor("currentLatitude", strLatitude);
+		saveValueFor("CurrentLongitude", strLongitude);
+
+		drawCurrentLocation();
+	}
+
+}
+
+void WebServicesAPI::drawCurrentLocation() {
+
+	QString strLatitude = getValueFor("currentLatitude", "25.271139");
+	QString strLongitude = getValueFor("CurrentLongitude", "55.307485");
+
+	getCoordinateConversion(strLongitude, strLatitude, "LATLNG", "MyLocation",
+			true);
+
+}
+
+void WebServicesAPI::startGPS() {
+
+
+// Obtain the location data source if it is not obtained already
+	if (!locationDataSource) {
+		locationDataSource = QGeoPositionInfoSource::createDefaultSource(this);
+		// Whenever the location data source signals that the current
+		// position is updated, the positionUpdated function is called
+		connect(locationDataSource, SIGNAL(positionUpdated(QGeoPositionInfo)),
+				this, SLOT(positionUpdated(QGeoPositionInfo)));
+
+		locationDataSource->setUpdateInterval(10000);
+		// Start listening for position updates
+		locationDataSource->startUpdates();
+	}
+}
+
+void WebServicesAPI::loadImages() {
+// Call the load() method for each ImageLoader instance inside the model
+	for (int row = 0; row < m_modelImageList->size(); ++row) {
+
+		qDebug() << "come in load images...." << m_modelImageList->value(row);
+	}
+}
+
+bb::cascades::DataModel* WebServicesAPI::imageModel() const {
+	return m_modelImageList;
+}
+
+bb::cascades::DataModel* WebServicesAPI::model() const {
+	return mm_model;
+}
+
+void WebServicesAPI::changeDataModelOrder(GroupDataModel *mm_model) {
+
+	QVariantList indexPath = mm_model->last();
+	QVariantList tempData;
+	for (int i = 0; i < mm_model->size(); i++) {
+		QVariantMap entry = mm_model->data(indexPath).toMap();
+		indexPath = mm_model->before(indexPath);
+		tempData.append(entry);
+	}
+
+	QVariantMap myMap;
+	QVariantList newIndex;
+	newIndex = mm_model->first();
+
+	for (int i = 0; i < tempData.size(); i++) {
+		myMap = tempData.value(i).toMap();
+		mm_model->updateItem(newIndex, myMap);
+		newIndex = mm_model->after(newIndex);
+	}
+
+}
+
+/**
+ * WebServicesAPI::succeeded()
+ *
+ * Return bool,  if the SOAP query was successful or not
+ */
+bool WebServicesAPI::succeeded() const {
+	return m_succeeded;
+}
+QString WebServicesAPI::statusMessage() const {
+	return mResponseStatusValue;
+}
+
+bool WebServicesAPI::active() const {
+	return m_active;
+}
+
+QVariantList WebServicesAPI::getQVariantListData() {
+
+	return mQVariantListData;
+}
+
+void WebServicesAPI::writeResponse(QString response, QString filename) {
+	QFile* mFile = new QFile("data/" + filename + ".txt");
+	if (!mFile->open(QIODevice::ReadWrite)) {
+		return;
+	}
+	mFile->write(response.toUtf8().constData());
+	mFile->flush();
+	mFile->close();
+
+}
+/*
+ *Parses the response of place of interest Auto complete based on currentws.
+ */
+void WebServicesAPI::onServiceResponsePOIAutoComplete() {
+
+	const QtSoapMessage& response = m_soap_POIAutoComplete.getResponse();
+
+	QString mData = response.returnValue().toString();
+
+	if (mCurrentWSAuto == "GetMakaniNo") {
+
+		parseGetMakaniNo(mData);
+
+	} else if (mCurrentWSAuto == "GetPOIInfo") {
+		m_active = true;
+		emit activeChanged();
+
+		mData = mData.replace("\\", "", Qt::CaseInsensitive);
+		JsonDataAccess jda;
+		QVariant listPoi = jda.loadFromBuffer(mData.toUtf8());
+		mlistSearchPOI.clear();
+		QVariantList mListPoi = listPoi.toMap().value("POI").toList();
+
+		mm_model->clear();
+
+		QString lat;
+		QString lng;
+		QString name;
+
+		mListLat.clear();
+		mListLng.clear();
+
+		QLocale c(QLocale::C);
+
+		for (int i = 0; i < mListPoi.size(); i++) {
+			QVariantMap entry;
+			lat = mListPoi.value(i).toMap().value("attributes").toMap().value(
+					"X_COORD").toString();
+			lng = mListPoi.value(i).toMap().value("attributes").toMap().value(
+					"Y_COORD").toString();
+
+			if (getValueFor("mLanguageCode", "en") == "en") {
+				name =
+						mListPoi.value(i).toMap().value("attributes").toMap().value(
+								"NAME_E").toString();
+				entry["NAME_E"] = name;
+			} else {
+				name =
+						mListPoi.value(i).toMap().value("attributes").toMap().value(
+								"NAME_A").toString();
+				entry["NAME_A"] = name;
+			}
+
+			entry["X_COORD"] = lat;
+			entry["Y_COORD"] = lng;
+			entry["TEL_NO"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"TEL_NO").toString();
+			entry["FAX_NO"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"FAX_NO").toString();
+			entry["EMAIL"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"EMAIL").toString();
+			entry["LICENSE_NO"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"LICENSE_NO").toString();
+			entry["URL"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"URL").toString();
+			entry["POBOX"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"POBOX").toString();
+
+			mlistSearchPOI.append(entry);
+		}
+	} else if (mCurrentWSAuto == "getCoordinateConversion") {
+		parseUAENGtoCoordinates(mData);
+	}
+
+	m_active = false;
+	m_succeeded = true;
+	emit activeChanged();
+	emit dataLoaded();
+
+}
+
+void WebServicesAPI::onServiceResponse() {
+
+	const QtSoapMessage& response = m_soap.getResponse();
+
+	QString mData = response.returnValue().toString();
+	qDebug() << "mData onServiceResponse" << mData;
+	qDebug() << "mcurrentws is:" << mCurrentWS;
+	if (response.isFault()) {
+		m_active = false;
+		m_succeeded = false;
+		emit activeChanged();
+		emit statusChanged();
+
+		showMySystemDialog(tr("Error in response"));
+		return;
+	}
+
+	if (mCurrentWS == "sendContactGmService") {
+	} else if (mCurrentWS == "GetMakaniNo") {
+		parseGetMakaniNo(mData);
+	} else if (mCurrentWS == "GetBuildingInfo") {
+		parseGetBuildingInfo(mData);
+	} else if (mCurrentWS == "GetPOIInfo") {
+		parseGetPOIInfo(mData);
+	} else if (mCurrentWS == "GetBuildingOutLine_EntrancePoints") {
+		parseGetBuildingOutLine_EntrancePoints(mData);
+	} else if (mCurrentWS == "GetAllCommunities") {
+		parseGetAllCommunities(mData);
+		m_active = false;
+		emit activeChanged();
+	} else if (mCurrentWS == "GetStreetsFromCommunity") {
+		parseGetStreetsFromCommunity(mData);
+		m_active = false;
+		emit activeChanged();
+	} else if (mCurrentWS == "GetBuildingsList") {
+		parseGetBuildingsList(mData);
+		m_active = false;
+		emit activeChanged();
+	} else if (mCurrentWS == "UAENGtoCoordinates"
+			|| mCurrentWS == "DMSToCoordinates") {
+		parseUAENGtoCoordinates(mData);
+	} else if (mCurrentWS == "GetBuildingAddress") {
+		parseGetBuildingAddress(mData);
+	} else if (mCurrentWS == "GetAllServicesSearch"
+			|| mCurrentWS == "GetAllServicesNearBy") {
+		qDebug() << "GetAllServicesSearch in";
+		parseGetAllServices(mData);
+		m_active = false;
+		emit activeChanged();
+	} else if (mCurrentWS == "GetPOIByServiceIDAndCategoryId") {
+		parseGetPOIByServiceIDAndCategoryId(mData);
+		m_active = false;
+		emit activeChanged();
+	} else if (mCurrentWS == "GetCategoriesByServiceID") {
+		parseGetCategoriesByServiceID(mData);
+		m_active = false;
+		emit activeChanged();
+	} else if (mCurrentWS == "GetPOIFromNearestLocation") {
+		parseGetPOIFromNearestLocation(mData);
+		m_active = false;
+		emit activeChanged();
+	} else if (mCurrentWS == "getCoordinateConversion") {
+		parseUAENGtoCoordinates(mData);
+	}
+}
+
+void WebServicesAPI::	(const QString &action, const QString &host,
+		const QString &prefix, const QString &request, const bool &isSecure) {
+
+	if (m_active)
+		return;
+
+	m_active = true;
+	emit activeChanged();
+
+	m_succeeded = false;
+
+	m_soap.setAction(action);
+	m_soap.setHost(host, isSecure);
+	QtSoapMessage data;
+
+	m_soap.submitRequest(data, prefix, request, true);
+
+}
+
+void WebServicesAPI::callAutoCompleteWS(const QString &action,
+		const QString &host, const QString &prefix,
+		const QtSoapMessage &request, const bool &isSecure) {
+
+	QtSoapMessage data = request;
+	m_soap_POIAutoComplete.setAction(action);
+
+	m_soap_POIAutoComplete.setHost(host, isSecure);
+	m_soap_POIAutoComplete.submitRequest(data, prefix, "", false);
+
+}
+
+void WebServicesAPI::callWS(const QString &action, const QString &host,
+		const QString &prefix, const QtSoapMessage &request,
+		const bool &isSecure) {
+	m_active = true;
+	emit activeChanged();
+	m_active = true;
+	emit activeChanged();
+
+	QtSoapMessage data = request;
+	m_soap.setAction(action);
+
+	m_soap.setHost(host, isSecure);
+	m_soap.submitRequest(data, prefix, "", false);
+
+}
+
+void WebServicesAPI::requestFinished(QNetworkReply* reply) {
+// Check the network reply for errors
+
+	if (reply->error() == QNetworkReply::NoError) {
+
+		QByteArray response = reply->readAll();
+		QString mData = mData.fromUtf8(response);
+
+		writeResponse(mData, mCurrentWS);
+
+	} else {
+		m_succeeded = false;
+		m_active = false;
+		emit activeChanged();
+		emit statusChanged();
+		emit dataLoaded();
+	}
+}
+
+QString WebServicesAPI::imageToByte(const QString &imagePath) {
+
+	QByteArray fileContent = imagePath.toUtf8();
+
+	if (imagePath != "") {
+		QFile* file = new QFile(imagePath);
+		bool ok = file->open(QIODevice::ReadOnly);
+		if (!ok) {
+			return "error read image";
+		}
+		fileContent = file->readAll().toBase64();
+		QString path = imagePath;
+		QFileInfo info(path.replace("file://", ""));
+	}
+	QString imageBytes = fileContent;
+
+	return imageBytes;
+
+}
+
+void WebServicesAPI::getCoordinateConversion(QString coordinateX,
+		QString coordinateY, QString type, QString convertFrom,
+		bool isFromMyLocation) {
+
+	mConvertorFrom = convertFrom;
+	QtSoapMessage request;
+	request.setMethod(
+			QtSoapQName("CoordinateConversion1", "http://tempuri.org/"));
+	request.addMethodArgument("type", "http://tempuri.org/", type);
+	request.addMethodArgument("coordinateX", "http://tempuri.org/",
+			coordinateX);
+	request.addMethodArgument("coordinateY", "http://tempuri.org/",
+			coordinateY);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+	QString action = "http://tempuri.org/IMakaniService/CoordinateConversion1";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	if (isFromMyLocation) {
+		mCurrentWSAuto = "getCoordinateConversion";
+		callAutoCompleteWS(action, host, prefix, request, false);
+	} else {
+		mCurrentWS = "getCoordinateConversion";
+		callWS(action, host, prefix, request, false);
+	}
+}
+
+void WebServicesAPI::GetAllCommunities(QString lang) {
+	mCurrentWS = "GetAllCommunities";
+
+	QtSoapMessage request;
+	request.setMethod(QtSoapQName("GetAllCommunities", "http://tempuri.org/"));
+	request.addMethodArgument("commname", "http://tempuri.org/", "");
+	request.addMethodArgument("lang", "http://tempuri.org/", lang);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action = "http://tempuri.org/IMakaniService/GetAllCommunities";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+}
+
+void WebServicesAPI::GetBuildingAddress(QString communityname,
+		QString streetname, QString buildingname, QString lang) {
+
+	mCurrentWS = "GetBuildingAddress";
+
+	QtSoapMessage request;
+	request.setMethod(QtSoapQName("GetBuildingAddress", "http://tempuri.org/"));
+	request.addMethodArgument("communityname", "http://tempuri.org/",
+			communityname);
+	request.addMethodArgument("streetname", "http://tempuri.org/", streetname);
+	request.addMethodArgument("buildingname", "http://tempuri.org/",
+			buildingname);
+	request.addMethodArgument("lang", "http://tempuri.org/", lang);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action = "http://tempuri.org/IMakaniService/GetBuildingAddress";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+
+}
+void WebServicesAPI::GetAllServices(QString from) {
+	mCurrentWS = from;
+	mm_modelservice->clear();
+
+	QtSoapMessage request;
+	request.setMethod(QtSoapQName("GetAllServices", "http://tempuri.org/"));
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+	QString action = "http://tempuri.org/IMakaniService/GetAllServices";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+
+}
+void WebServicesAPI::GetBuildingInfo(QString makaninumber) {
+	mCurrentWS = "GetBuildingInfo";
+	QtSoapMessage request;
+	if (makaninumber.length() == 10)
+		makaninumber = makaninumber.mid(0, 5) + " " + makaninumber.mid(5, 5);
+
+	request.setMethod(QtSoapQName("GetBuildingInfo", "http://tempuri.org/"));
+	request.addMethodArgument("makaninumber", "http://tempuri.org/",
+			makaninumber);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action = "http://tempuri.org/IMakaniService/GetBuildingInfo";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+}
+void WebServicesAPI::GetBuildingOutLine_EntrancePoints(QString lat, QString lng,
+		bool needConvert, bool fromMultiplePin) {
+
+	isNeedConvertLatToUAENG = needConvert;
+	isOutlineFromMultiplePin = fromMultiplePin;
+	mCurrentWS = "GetBuildingOutLine_EntrancePoints";
+	mPlaceLatitude = lat;
+	mPlaceLongitude = lng;
+
+	QtSoapMessage request;
+	request.setMethod(
+			QtSoapQName("GetBuildingOutLine_EntrancePoints",
+					"http://tempuri.org/"));
+	request.addMethodArgument("lat", "http://tempuri.org/", lat);
+	request.addMethodArgument("lng", "http://tempuri.org/", lng);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action =
+			"http://tempuri.org/IMakaniService/GetBuildingOutLine_EntrancePoints";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+
+}
+void WebServicesAPI::GetBuildingsList(QString communityname, QString streetname,
+		QString lang) {
+	mCurrentWS = "GetBuildingsList";
+
+	QtSoapMessage request;
+	request.setMethod(QtSoapQName("GetBuildingsList", "http://tempuri.org/"));
+	request.addMethodArgument("communityname", "http://tempuri.org/",
+			communityname);
+	request.addMethodArgument("streetname", "http://tempuri.org/", streetname);
+	request.addMethodArgument("lang", "http://tempuri.org/", lang);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action = "http://tempuri.org/IMakaniService/GetBuildingsList";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+}
+void WebServicesAPI::GetCategoriesByServiceID(QString serviceid) {
+	mCurrentWS = "GetCategoriesByServiceID";
+
+	QtSoapMessage request;
+	request.setMethod(
+			QtSoapQName("GetCategoriesByServiceID", "http://tempuri.org/"));
+	request.addMethodArgument("serviceid", "http://tempuri.org/", serviceid);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action =
+			"http://tempuri.org/IMakaniService/GetCategoriesByServiceID";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+}
+
+void WebServicesAPI::GetPOIByServiceIDAndCategoryId(QString categoryid,
+		QString serviceid) {
+
+	mCurrentWS = "GetPOIByServiceIDAndCategoryId";
+
+	QtSoapMessage request;
+	request.setMethod(
+			QtSoapQName("GetPOIByServiceIDAndCategoryId",
+					"http://tempuri.org/"));
+	request.addMethodArgument("categoryid", "http://tempuri.org/", categoryid);
+	request.addMethodArgument("serviceid", "http://tempuri.org/", serviceid);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action =
+			"http://tempuri.org/IMakaniService/GetPOIByServiceIDAndCategoryId";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+
+}
+void WebServicesAPI::GetPOIFromNearestLocation(QString serviceid, QString lat,
+		QString lng) {
+	mCurrentWS = "GetPOIFromNearestLocation";
+	mm_modelpoinearby->clear();
+
+	QtSoapMessage request;
+	request.setMethod(
+			QtSoapQName("GetPOIFromNearestLocation", "http://tempuri.org/"));
+	request.addMethodArgument("serviceid", "http://tempuri.org/", serviceid);
+	request.addMethodArgument("lat", "http://tempuri.org/", lat);
+	request.addMethodArgument("lng", "http://tempuri.org/", lng);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action =
+			"http://tempuri.org/IMakaniService/GetPOIFromNearestLocation";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+
+}
+void WebServicesAPI::GetPOIInfo(QString poiname, QString lang, bool isAuto,
+		QString mFrom) {
+	myPOILabel = poiname;
+	QString langs = "E";
+	if (getValueFor("mLanguageCode", "en") == "en") {
+		langs = "E";
+	} else {
+		langs = "A";
+	}
+	QtSoapMessage request;
+	request.setMethod(QtSoapQName("GetPOIInfo", "http://tempuri.org/"));
+	request.addMethodArgument("poiname", "http://tempuri.org/", poiname);
+	request.addMethodArgument("lang", "http://tempuri.org/", langs);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action = "http://tempuri.org/IMakaniService/GetPOIInfo";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	mPOIFrom = mFrom;
+
+	if (isAuto) {
+		mCurrentWSAuto = "GetPOIInfo";
+		callAutoCompleteWS(action, host, prefix, request, false);
+	} else {
+		mCurrentWS = "GetPOIInfo";
+		callWS(action, host, prefix, request, false);
+	}
+
+}
+
+void WebServicesAPI::GetStreetsFromCommunity(QString communityname,
+		QString streetname, QString lang) {
+	mCurrentWS = "GetStreetsFromCommunity";
+
+	QtSoapMessage request;
+	request.setMethod(
+			QtSoapQName("GetStreetsFromCommunity", "http://tempuri.org/"));
+	request.addMethodArgument("communityname", "http://tempuri.org/",
+			communityname);
+	request.addMethodArgument("streetname", "http://tempuri.org/", streetname);
+	request.addMethodArgument("lang", "http://tempuri.org/", lang);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action = "http://tempuri.org/IMakaniService/GetStreetsFromCommunity";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+
+}
+void WebServicesAPI::UAENGtoCoordinates(QString UAENG, QString token,
+		QString convertFrom) {
+	mCurrentWS = "UAENGtoCoordinates";
+	mConvertorFrom = convertFrom;
+
+	QtSoapMessage request;
+	request.setMethod(QtSoapQName("UAENGtoCoordinates", "http://tempuri.org/"));
+	request.addMethodArgument("UAENG", "http://tempuri.org/", UAENG);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action = "http://tempuri.org/IMakaniService/UAENGtoCoordinates";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+
+}
+void WebServicesAPI::DMSToCoordinates(QString lat1, QString lat2, QString lat3,
+		QString lon1, QString lon2, QString lon3) {
+	mCurrentWS = "DMSToCoordinates";
+	QtSoapMessage request;
+	request.setMethod(QtSoapQName("DMSToCoordinates", "http://tempuri.org/"));
+	request.addMethodArgument("degLat", "http://tempuri.org/", lat1);
+	request.addMethodArgument("minLat", "http://tempuri.org/", lat2);
+	request.addMethodArgument("secLat", "http://tempuri.org/", lat3);
+	request.addMethodArgument("degLng", "http://tempuri.org/", lon1);
+	request.addMethodArgument("minLng", "http://tempuri.org/", lon2);
+	request.addMethodArgument("secLng", "http://tempuri.org/", lon3);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action = "http://tempuri.org/IMakaniService/DMSToCoordinates";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+
+}
+void WebServicesAPI::GetMakaniNo(QString makaninumber) {
+	mCurrentWSAuto = "GetMakaniNo";
+
+	QtSoapMessage request;
+	request.setMethod(QtSoapQName("GetMakaniNo", "http://tempuri.org/"));
+	request.addMethodArgument("makaninumber", "http://tempuri.org/",
+			makaninumber);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+
+	QString action = "http://tempuri.org/IMakaniService/GetMakaniNo";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callAutoCompleteWS(action, host, prefix, request, false);
+
+}
+void WebServicesAPI::CoordinateConversion1(QString type, QString coordinateX,
+		QString coordinateY, QString token, QString convertFrom) {
+	mConvertorFrom = convertFrom;
+	QtSoapMessage request;
+	request.setMethod(
+			QtSoapQName("CoordinateConversion1", "http://tempuri.org/"));
+	request.addMethodArgument("type", "http://tempuri.org/", type);
+	request.addMethodArgument("token", "http://tempuri.org/", mTockenID);
+	request.addMethodArgument("coordinateX", "http://tempuri.org/",
+			coordinateX);
+	request.addMethodArgument("coordinateY", "http://tempuri.org/",
+			coordinateY);
+
+	QString action = "http://tempuri.org/IMakaniService/CoordinateConversion1";
+	QString host = mWSHost;
+	QString prefix = mWSPrefix;
+
+	callWS(action, host, prefix, request, false);
+}
+
+void WebServicesAPI::parseGetAllCommunities(QString data) {
+
+	JsonDataAccess jda;
+	QString communityA;
+	QString communityE;
+
+	mlistSearchCommunity.clear();
+	QVariant mAllCommunitiesData = jda.loadFromBuffer(data);
+	QVariantList mCommunityList =
+			mAllCommunitiesData.toMap().value("COMMUNITY").toList();
+	mm_modelCommunity->clear();
+	for (int i = 0; i < mCommunityList.size(); i++) {
+		QVariantMap entry;
+		communityA =
+				mCommunityList.value(i).toMap().value("COMMUNITY_A").toString();
+		communityE =
+				mCommunityList.value(i).toMap().value("COMMUNITY_E").toString();
+		if (getValueFor("mLanguageCode", "en") == "en") {
+			entry["COMMUNITY_E"] = communityE;
+			mlistSearchCommunity.append(communityE);
+		} else {
+			entry["COMMUNITY_A"] = communityA;
+			mlistSearchCommunity.append(communityA);
+		}
+		mm_modelCommunity->insert(entry);
+	}
+	emit modelcommunitychanged();
+}
+void WebServicesAPI::parseGetAllServices(QString data) {
+	JsonDataAccess jda;
+	QString SERVICE_NAME_E;
+	QVariant mService = jda.loadFromBuffer(data);
+	QVariantList mServicesList = mService.toMap().value("SERVICES").toList();
+
+	mm_modelservice->clear();
+
+	for (int i = mServicesList.size() - 1; i >= 0; i--) {
+		if (getValueFor("mLanguageCode", "en") == "en") {
+			SERVICE_NAME_E = mServicesList.value(i).toMap().value(
+					"SERVICE_NAME_E").toString();
+		} else {
+			SERVICE_NAME_E = mServicesList.value(i).toMap().value(
+					"SERVICE_NAME_A").toString();
+		}
+		QVariantMap entry;
+		entry["service_name"] = SERVICE_NAME_E;
+		entry["service_id"] =
+				mServicesList.value(i).toMap().value("SERVICE_ID").toString();
+
+		mm_modelservice->insert(entry);
+	}
+	emit modelservicechanged();
+	mServiceResponseId = mServicesList;
+}
+
+QString WebServicesAPI::getId(QString myIndex) {
+	QString serviceID;
+	for (int i = 0; i < mServiceResponseId.size(); i++) {
+		if (i == QVariant(myIndex).toInt()) {
+			serviceID =
+					mServiceResponseId.value(i).toMap().value("SERVICE_ID").toString();
+			break;
+		}
+	}
+	return serviceID;
+}
+
+QString WebServicesAPI::getCatValueFromId(QString myIndex) {
+	QString CategoryID;
+
+	for (int i = 0; i < mCategoryResponseId.size(); i++) {
+		if (i == QVariant(myIndex).toInt()) {
+
+			CategoryID = mCategoryResponseId.value(i).toMap().value(
+					"CATEGORY_ID").toString();
+			break;
+		}
+	}
+	return CategoryID;
+}
+
+void WebServicesAPI::parseGetBuildingAddress(QString data) {
+	JsonDataAccess jda;
+	QVariant mEntrance = jda.loadFromBuffer(data);
+	QVariantList mBUILDING = mEntrance.toMap().value("BUILDING").toList();
+	if (mBUILDING.size() > 1) {
+		QString latlng;
+		for (int i = 0; i < mBUILDING.size(); i++) {
+			latlng = mBUILDING.value(i).toMap().value("LATLNG").toString();
+			drawPinOnMap("map_pin.png", latlng, "", mPinTypeMultiple, NULL);
+		}
+	} else {
+		//call web service entrance outline
+		QString noData = mEntrance.toMap().value("DATA").toString();
+
+		if (noData == "No Data Found") {
+			m_active = false;
+			emit activeChanged();
+			checkResponseNull = true;
+			showMySystemDialog(tr("No Data Found"));
+		} else {
+			checkResponseNull = false;
+			latlng = mBUILDING.value(0).toMap().value("LATLNG").toString();
+			QString makaniNumber =
+					mBUILDING.value(0).toMap().value("MAKANI").toString();
+			QString colonPattern(",");
+			QStringList mlistlng = latlng.split(colonPattern);
+			if (checkisFrom()) {
+				setBuildingToDirectionLatLng(latlng, true);
+			} else {
+				setBuildingToDirectionLatLng(latlng, false);
+			}
+			if (checkisFromAdvanceSearch()) {
+				GetBuildingInfo(makaniNumber);
+			} else {
+				m_active = false;
+				m_succeeded = true;
+				emit activeChanged();
+				emit dataLoaded();
+			}
+		}
+		emit checkDataNull();
+	}
+}
+bool WebServicesAPI::getcheckResponseNullResult() {
+	return checkResponseNull;
+}
+void WebServicesAPI::parseGetBuildingInfo(QString data) {
+
+	JsonDataAccess jda;
+	QString coords;
+	QVariantMap entry;
+	QVariant list = jda.loadFromBuffer(data);
+	mm_model->clear();
+
+	mMapData = new MapData();
+
+	QVariantList mMakaniListEntrance =
+			list.toMap().value("MakaniInfo").toMap().value("ENTRANCE").toList();
+
+	isOutlineBuilding = true;
+
+	if (mMakaniListEntrance.size() == 0) {
+		showMySystemDialog(tr("No Data Found"));
+		m_active = false;
+		emit activeChanged();
+		return;
+	} else {
+		mLastFocusID = ""; // Clear last focus id
+		for (int i = 0; i < mMakaniListEntrance.size(); i++) {
+			QString mStrMakaniNo;
+			QString mStrLatLon;
+			QVariantMap mMapEntrance = mMakaniListEntrance.value(i).toMap();
+			mStrMakaniNo = mMapEntrance.value("MAKANI").toString();
+			mStrLatLon = mMapEntrance.value("LATLNG").toString();
+			drawPinOnMap("map_entrance.png", mStrLatLon, mStrMakaniNo,
+					mPinTypeEntrance, NULL);
+		}
+
+		QVariantList mMakaniListCoord =
+				list.toMap().value("BuildingInfo").toMap().value("BUILDING").toList();
+
+		for (int i = 0; i < mMakaniListCoord.size(); i++) {
+			QString mStrLatCoord;
+			QVariantMap mMapEntrance = mMakaniListCoord.value(i).toMap();
+			mStrLatCoord = mMapEntrance.value("COORD").toString();
+			QString mStrLatBLDIF;
+			mStrLatBLDIF = mMapEntrance.value("BLDIF").toString();
+
+			QString colonPattern(";");
+
+			QStringList listLatLon = mStrLatCoord.split(colonPattern);
+			QLocale c(QLocale::C);
+			mListLat.clear();
+			mListLng.clear();
+			for (int j = 0; j < listLatLon.size(); j++) {
+				QString currentCoord = listLatLon.value(j);
+				if (currentCoord.length() > 0) {
+					QString commaPattern(",");
+					QStringList mListCoord = currentCoord.split(commaPattern);
+
+					QString templat = mListCoord.value(0);
+					QString templng = mListCoord.value(1);
+
+					entry["lat"] = mListCoord.value(0);
+					entry["lng"] = mListCoord.value(1);
+
+					mlistSearchMakani.append(entry);
+					mListLat.append(c.toDouble(templat));
+					mListLng.append(c.toDouble(templng));
+				}
+			}
+			drawBulidingOutLine(mListLat, mListLng, mStrLatBLDIF);
+		}
+
+		m_active = false;
+		m_succeeded = true;
+		emit activeChanged();
+		emit dataLoaded();
+	}
+}
+
+void WebServicesAPI::parseGetBuildingsList(QString data) {
+	JsonDataAccess jda;
+	QString coords;
+	QVariant list = jda.loadFromBuffer(data);
+	mm_modelBuiding->clear();
+	QVariantList mBuildingList = list.toMap().value("BUILDING").toList();
+	QString ADDRESS_E;
+	QString ADDRESS_A;
+	mlistSearchBuilding.clear();
+	for (int i = 0; i < mBuildingList.size(); i++) {
+		QVariantMap entry;
+
+		if (getValueFor("mLanguageCode", "en") == "en") {
+			ADDRESS_E =
+					mBuildingList.value(i).toMap().value("ADDRESS_E").toString();
+			mlistSearchBuilding.append(ADDRESS_E);
+		} else {
+			ADDRESS_A =
+					mBuildingList.value(i).toMap().value("ADDRESS_A").toString();
+			mlistSearchBuilding.append(ADDRESS_A);
+		}
+
+		mm_modelBuiding->insert(entry);
+	}
+	if (getValueFor("mLanguageCode", "en") == "en") {
+		mm_modelBuiding->setSortingKeys(QStringList() << "ADDRESS_E");
+	} else {
+		mm_modelBuiding->setSortingKeys(QStringList() << "ADDRESS_E");
+	}
+	emit modelBuidingchanged();
+}
+
+void WebServicesAPI::parseGetBuildingOutLine_EntrancePoints(QString data) {
+
+	JsonDataAccess jda;
+	QString coords;
+	QVariant list = jda.loadFromBuffer(data);
+	mm_model->clear();
+
+	mMapData = new MapData();
+
+	QVariantList mMakaniListEntrance =
+			list.toMap().value("BuildingInfo").toMap().value("ENTERANCE").toList();
+	isOutlineBuilding = true;
+	QString mStrMakaniNo;
+	QString mStrLatLon;
+	QString mStrEntranceID;
+
+	if (mMakaniListEntrance.size() == 0) {
+		if (isNeedConvertLatToUAENG) {
+			if (isOutlineFromMultiplePin)
+				getCoordinateConversion(mPlaceLongitude, mPlaceLatitude,
+						"LATLNG", "NoOutLineMultiplePin", false);
+			else
+				getCoordinateConversion(mPlaceLongitude, mPlaceLatitude,
+						"LATLNG", "NoOutLine", false);
+		} else {
+			m_active = false;
+			emit activeChanged();
+		}
+	} else {
+		mLastFocusID = ""; // Clear last focus id
+		for (int i = 0; i < mMakaniListEntrance.size(); i++) {
+
+			QVariantMap mMapEntrance = mMakaniListEntrance.value(i).toMap();
+			mStrMakaniNo = mMapEntrance.value("MAKANI").toString();
+			mStrLatLon = mMapEntrance.value("LATLNG").toString();
+			mStrEntranceID = mMapEntrance.value("ENTERANCEID").toString();
+			drawPinOnMap("map_entrance.png", mStrLatLon, mStrMakaniNo,
+					mPinTypeEntrance, NULL);
+		}
+
+		QVariantList mMakaniListCoord =
+				list.toMap().value("EntranceInfo").toMap().value("BUILDING").toList();
+
+		for (int i = 0; i < mMakaniListCoord.size(); i++) {
+			QString mStrLatCoord;
+			QVariantMap mMapEntrance = mMakaniListCoord.value(i).toMap();
+			mStrLatCoord = mMapEntrance.value("COORD").toString();
+			QString mStrLatBLDIF;
+			mStrLatBLDIF = mMapEntrance.value("BLDIF").toString();
+
+			QString colonPattern(";");
+
+			QStringList listLatLon = mStrLatCoord.split(colonPattern);
+			QLocale c(QLocale::C);
+			mListLat.clear();
+			mListLng.clear();
+			for (int j = 0; j < listLatLon.size(); j++) {
+				QString currentCoord = listLatLon.value(j);
+				if (currentCoord.length() > 0) {
+					QString commaPattern(",");
+					QStringList mListCoord = currentCoord.split(commaPattern);
+
+					QString templat = mListCoord.value(0);
+					QString templng = mListCoord.value(1);
+
+					mListLat.append(c.toDouble(templat));
+					mListLng.append(c.toDouble(templng));
+				}
+			}
+			drawBulidingOutLine(mListLat, mListLng, mStrLatBLDIF);
+		}
+		m_active = false;
+		emit activeChanged();
+	}
+}
+
+void WebServicesAPI::parseGetCategoriesByServiceID(QString data) {
+	JsonDataAccess jda;
+	QVariantList mListSERVICE = jda.loadFromBuffer(data).toMap().value(
+			"SERVICE").toList();
+	QVariantList mListPoi = mListSERVICE.value(0).toMap().value("POI").toList();
+	QVariantList mListCategory =
+			mListSERVICE.value(0).toMap().value("CATEGORY").toList();
+	mListDialogData.clear();
+	mCategoryResponseId.clear();
+	for (int i = 0; i < mListCategory.size(); i++) {
+		if (getValueFor("mLanguageCode", "en") == "en") {
+			mListDialogData.append(
+					mListCategory.value(i).toMap().value("CATEGORY_NAME_E").toString());
+		} else {
+			mListDialogData.append(
+					mListCategory.value(i).toMap().value("CATEGORY_NAME_A").toString());
+		}
+	}
+	mCategoryResponseId = mListCategory;
+	GetPOIByServiceIDAndCategoryId("", getServiceId());
+}
+
+QString WebServicesAPI::getValueFromName(QString myCatName) {
+	QString categoryName;
+	QString categoryId;
+	for (int i = 0; i < mCategoryResponseId.size(); i++) {
+		if (myCatName
+				== mCategoryResponseId.value(i).toMap().value("CATEGORY_NAME_E").toString()) {
+			categoryName = mCategoryResponseId.value(i).toMap().value(
+					"CATEGORY_NAME_E").toString();
+			categoryId = mCategoryResponseId.value(i).toMap().value(
+					"CATEGORY_ID").toString();
+			break;
+		}
+	}
+	return categoryId;
+}
+
+void WebServicesAPI::parseGetPOIByServiceIDAndCategoryId(QString data) {
+	JsonDataAccess jda;
+	QVariant mDataLList = jda.loadFromBuffer(data);
+	QVariantList mListSERVICE = mDataLList.toMap().value("SERVICE").toList();
+
+	mlistSearchPlaceName.clear();
+	QVariantList mLisPOI;
+	for (int i = 0; i < mListSERVICE.size(); i++) {
+		QVariantMap entry;
+		mLisPOI = mListSERVICE.value(i).toMap().value("POI").toList();
+
+		for (int j = 0; j < mLisPOI.size(); j++) {
+			entry["NAME_E"] =
+					mLisPOI.value(j).toMap().value("NAME_E").toString();
+			entry["NAME_A"] =
+					mLisPOI.value(j).toMap().value("NAME_A").toString();
+
+			entry["X_COORD"] =
+					mLisPOI.value(j).toMap().value("X_COORD").toString();
+			entry["Y_COORD"] =
+					mLisPOI.value(j).toMap().value("Y_COORD").toString();
+			mlistSearchPlaceName.append(entry);
+		}
+	}
+}
+
+void WebServicesAPI::parseGetPOIFromNearestLocation(QString data) {
+	qDebug() << "parseGetPOIFromNearestLocation mdata is: " << data;
+	JsonDataAccess jda;
+	QVariant mDataLList = jda.loadFromBuffer(data);
+	QVariantList mListPOI = mDataLList.toMap().value("POI").toList();
+	mm_modelpoinearby->clear();
+	for (int i = 0; i < mListPOI.size(); i++) {
+		QString name;
+		if (getValueFor("mLanguageCode", "en") == "en") {
+			name = mListPOI.value(i).toMap().value("NAME_E").toString();
+		} else {
+			name = mListPOI.value(i).toMap().value("NAME_A").toString();
+		}
+		QString lat = mListPOI.value(i).toMap().value("X_COORD").toString();
+		QString lon = mListPOI.value(i).toMap().value("Y_COORD").toString();
+		bool ok;
+		double distance =
+				mListPOI.value(i).toMap().value("DISTANCE").toString().replace(
+						" Km", "", Qt::CaseInsensitive).toDouble(&ok);
+
+		QString str = QString::number(distance, 'f', 1) + " Km";
+
+		mm_modelpoinearby->append(new PoiData(name, lat, lon, str, this));
+
+	}
+	emit modelpoinearbychanged();
+	if (mListPOI.size() == 0) {
+		emit noDataFound();
+	}
+}
+
+void WebServicesAPI::parseGetPOIInfo(QString data) {
+//json data had some whitespaces,extra slashes so we have to replace them by doing:
+
+	data = data.replace("\\", "", Qt::CaseInsensitive);
+	JsonDataAccess jda;
+	QVariant listPoi = jda.loadFromBuffer(data.toUtf8());
+	mlistSearchPOI.clear();
+	QVariantList mListPoi = listPoi.toMap().value("POI").toList();
+	mm_model->clear();
+	QString lat;
+	QString lng;
+	QString name;
+	mListLat.clear();
+	mListLng.clear();
+	QLocale c(QLocale::C);
+	if (mPOIFrom == "autoComplete") {
+		for (int i = 0; i < mListPoi.size(); i++) {
+			QVariantMap entry;
+			lat = mListPoi.value(i).toMap().value("attributes").toMap().value(
+					"X_COORD").toString();
+			lng = mListPoi.value(i).toMap().value("attributes").toMap().value(
+					"Y_COORD").toString();
+
+			if (getValueFor("mLanguageCode", "en") == "en") {
+				name =
+						mListPoi.value(i).toMap().value("attributes").toMap().value(
+								"NAME_E").toString();
+				entry["NAME_E"] = name;
+			} else {
+				name =
+						mListPoi.value(i).toMap().value("attributes").toMap().value(
+								"NAME_A").toString();
+				entry["NAME_A"] = name;
+			}
+
+			entry["X_COORD"] = lat;
+			entry["Y_COORD"] = lng;
+			entry["TEL_NO"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"TEL_NO").toString();
+			entry["FAX_NO"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"FAX_NO").toString();
+			entry["EMAIL"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"EMAIL").toString();
+			entry["LICENSE_NO"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"LICENSE_NO").toString();
+			entry["URL"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"URL").toString();
+			entry["POBOX"] =
+					mListPoi.value(i).toMap().value("attributes").toMap().value(
+							"POBOX").toString();
+
+			mlistSearchPOI.append(entry);
+		}
+	} else if (mPOIFrom == "searchOnMap") {
+
+		ClearMapdata();
+
+		if (mListPoi.size() > 1) {
+			mPinType = mPinTypeMultiple;
+			mListPOIPrevious.clear();
+			for (int i = 0; i < mListPoi.size(); i++) {
+				QVariantMap entry = mListPoi.value(i).toMap().value(
+						"attributes").toMap();
+
+				lat =
+						mListPoi.value(i).toMap().value("attributes").toMap().value(
+								"X_COORD").toString();
+				lng =
+						mListPoi.value(i).toMap().value("attributes").toMap().value(
+								"Y_COORD").toString();
+				QVariantMap mListdata;
+				if (getValueFor("mLanguageCode", "en") == "en") {
+					name =
+							mListPoi.value(i).toMap().value("attributes").toMap().value(
+									"NAME_E").toString();
+				} else {
+					name =
+							mListPoi.value(i).toMap().value("attributes").toMap().value(
+									"NAME_A").toString();
+				}
+
+				mListdata["NAME_E"] = name;
+				mListdata["X_COORD"] = lat;
+				mListdata["Y_COORD"] = lng;
+				mListdata["TEL_NO"] = mListPoi.value(i).toMap().value(
+						"attributes").toMap().value("TEL_NO").toString();
+				mListdata["FAX_NO"] = mListPoi.value(i).toMap().value(
+						"attributes").toMap().value("FAX_NO").toString();
+				mListdata["EMAIL"] = mListPoi.value(i).toMap().value(
+						"attributes").toMap().value("EMAIL").toString();
+				mListdata["LICENSE_NO"] = mListPoi.value(i).toMap().value(
+						"attributes").toMap().value("LICENSE_NO").toString();
+				mListdata["URL"] =
+						mListPoi.value(i).toMap().value("attributes").toMap().value(
+								"URL").toString();
+				mListdata["POBOX"] = mListPoi.value(i).toMap().value(
+						"attributes").toMap().value("POBOX").toString();
+				mListPOIPrevious.append(mListdata);
+				drawPinOnMap("map_pin.png", lat + "," + lng, name,
+						mPinTypeMultiple, mListdata);
+			}
+
+			m_active = false;
+			emit activeChanged();
+
+		} else if (mListPoi.size() == 1) {
+			QVariantMap entry =
+					mListPoi.value(0).toMap().value("attributes").toMap();
+			mPinType = mPinTypeEntrance;
+			lat = mListPoi.value(0).toMap().value("attributes").toMap().value(
+					"X_COORD").toString();
+			lng = mListPoi.value(0).toMap().value("attributes").toMap().value(
+					"Y_COORD").toString();
+
+			poiNameValue = entry.value("NAME_E").toString();
+			poiPhoneValue = entry.value("TEL_NO").toString();
+			poiFaxValue = entry.value("FAX_NO").toString();
+			poiEmailValue = entry.value("EMAIL").toString();
+			poiLicenseValue = entry.value("LICENSE_NO").toString();
+			poiURLValue = entry.value("URL").toString();
+			poiPOBoxValue = entry.value("POBOX").toString();
+
+			setPoiInfoData(poiNameValue, poiPhoneValue, poiFaxValue,
+					poiEmailValue, poiLicenseValue, poiURLValue, poiPOBoxValue);
+
+			GetBuildingOutLine_EntrancePoints(lat, lng, false, false);
+
+		} else {
+			callGoogleApi(myPOILabel, true);
+		}
+
+	} else if (mPOIFrom == "searchDirection") {
+		if (mListPoi.size() > 0) {
+			QVariantMap entry =
+					mListPoi.value(0).toMap().value("attributes").toMap();
+			lat = mListPoi.value(0).toMap().value("attributes").toMap().value(
+					"X_COORD").toString();
+			lng = mListPoi.value(0).toMap().value("attributes").toMap().value(
+					"Y_COORD").toString();
+			hasResponse = true;
+			mPOIdatalatng = lat + "," + lng;
+			emit poidataloaded();
+		} else {
+			callGoogleApi(myPOILabel, true);
+		}
+	}
+
+}
+
+void WebServicesAPI::setPoiInfoData(QString name, QString telephone,
+		QString fax, QString email, QString license, QString url,
+		QString pobox) {
+	poiNameValue = name.trimmed();
+	emit poiNameDone();
+	poiPhoneValue = telephone.trimmed();
+	emit poiPhoneDone();
+	poiFaxValue = fax.trimmed();
+	emit poiFaxDone();
+	poiEmailValue = email.trimmed();
+	emit poiEmailDone();
+	poiLicenseValue = license.trimmed();
+	emit poiLicenseDone();
+	poiURLValue = url.trimmed();
+	emit poiURLDone();
+	poiPOBoxValue = pobox.trimmed();
+	emit poiPOBoxDone();
+}
+
+void WebServicesAPI::setPinFromFav(bool isNearBy, bool isFirst,
+		QString location, QString lat, QString lon, QString name,
+		QString telephone, QString fax, QString email, QString license,
+		QString url, QString pobox) {
+	mPinType = mPinTypeMultiple;
+	if (isFirst == true)
+		mListPOIPrevious.clear();
+	QVariantMap mListdata;
+	mListdata["NAME_E"] = name;
+	mListdata["Location"] = location;
+	mListdata["X_COORD"] = lat;
+	mListdata["Y_COORD"] = lon;
+	mListdata["TEL_NO"] = telephone;
+	mListdata["FAX_NO"] = fax;
+	mListdata["EMAIL"] = email;
+	mListdata["LICENSE_NO"] = license;
+	mListdata["URL"] = url;
+	mListdata["POBOX"] = pobox;
+	QString mapPin;
+	if (checkInvalid(location.replace(" ", "")) == "number")
+		mapPin = "map_entrance.png";
+	else
+		mapPin = "map_pin.png";
+
+	if (isNearBy) {
+		mListdata["isGreenPin"] = "true";
+		drawPinOnMap("map_pin_near_by.png", lat + "," + lon, location,
+				mPinTypeMultiple, mListdata);
+	} else
+		drawPinOnMap(mapPin, lat + "," + lon, location, mPinTypeMultiple,
+				mListdata);
+	mListPOIPrevious.append(mListdata);
+}
+
+QString WebServicesAPI::poiName() const {
+	return poiNameValue;
+}
+QString WebServicesAPI::poiMakaniUAENG() const {
+	return poiMakaniValue;
+}
+QString WebServicesAPI::poiPhone() const {
+	return poiPhoneValue;
+}
+QString WebServicesAPI::poiFax() const {
+	return poiFaxValue;
+}
+QString WebServicesAPI::poiEmail() const {
+	return poiEmailValue;
+}
+QString WebServicesAPI::poiLicense() const {
+	return poiLicenseValue;
+}
+QString WebServicesAPI::poiURL() const {
+	return poiURLValue;
+}
+QString WebServicesAPI::poiPOBox() const {
+	return poiPOBoxValue;
+}
+
+void WebServicesAPI::ClearMapdata() {
+	mLastFocusID = "";
+	myMapView->mapData()->clear();
+}
+void WebServicesAPI::initMapData() {
+	mMapData = new MapData();
+}
+void WebServicesAPI::parseGetStreetsFromCommunity(QString data) {
+	JsonDataAccess jda;
+	QVariant mStreetInfo = jda.loadFromBuffer(data);
+	QVariantList mCommunity = mStreetInfo.toMap().value("COMMUNITY").toList();
+	QString STREET_NAME_E;
+	QString STREET_NAME_A;
+	mm_modelStreet->clear();
+	mlistSearchStreet.clear();
+	for (int i = 0; i < mCommunity.size(); i++) {
+		QVariantMap entry;
+
+		STREET_NAME_A =
+				mCommunity.value(i).toMap().value("STREET_NAME_A").toString();
+		STREET_NAME_E =
+				mCommunity.value(i).toMap().value("STREET_NAME_E").toString();
+
+		if (getValueFor("mLanguageCode", "en") == "en") {
+			mlistSearchStreet.append(STREET_NAME_E);
+			entry["STREET_NAME_E"] = STREET_NAME_E;
+		} else {
+			mlistSearchStreet.append(STREET_NAME_A);
+			entry["STREET_NAME_A"] = STREET_NAME_A;
+		}
+
+		mm_modelStreet->insert(entry);
+		emit modelStreetchanged();
+	}
+
+}
+void WebServicesAPI::parseUAENGtoCoordinates(QString data) {
+
+	JsonDataAccess jda;
+	QVariant makani = jda.loadFromBuffer(data);
+	mLisToSend.clear();
+
+	mCCMakani = makani.toMap().value("MAKANI").toString();
+	mCCUAENG = makani.toMap().value("UAENG").toString();
+	mNODATA = makani.toMap().value("DATA").toString();
+
+	QString spacePattern(" ");
+
+	QStringList mListDLTM = makani.toMap().value("DLTM").toString().split(
+			spacePattern);
+	mCCDLTM1 = mListDLTM.value(0);
+	mCCDLTM2 = mListDLTM.value(1);
+
+	QStringList mListUTM = makani.toMap().value("UTM").toString().split(
+			spacePattern);
+	mCCUTM1 = mListUTM.value(0);
+	mCCUTM2 = mListUTM.value(1);
+
+	QString commaPattern(",");
+	QStringList mListLATLON = makani.toMap().value("LATLNG").toString().split(
+			commaPattern);
+	mCCLatitude = mListLATLON.value(0);
+	QString mFormateLat = QString("%1").arg(mCCLatitude);
+	bool ok1 = true;
+	QString str = QString("%5").arg(mFormateLat.toDouble(&ok1), 0, 'f', 5);
+
+	mCCLatitude = str;
+	mCCLongitude = mListLATLON.value(1);
+
+	QString mFormateLon = QString("%1").arg(mCCLongitude);
+	bool ok2 = true;
+	QString str1 = QString("%5").arg(mFormateLon.toDouble(&ok2), 0, 'f', 5);
+
+	mCCLongitude = str1;
+
+	QStringList mListDMSLATLON = makani.toMap().value("D:M:S").toString().split(
+			commaPattern);
+	QString mDMSLat = mListDMSLATLON.value(0);
+	QString mDMSLon = mListDMSLATLON.value(1);
+
+	bool ok = false;
+	Q_UNUSED(ok);
+	QString colonPattern(":");
+	QStringList mListDMSLAT = mDMSLat.split(colonPattern);
+	mCCDMSLatitude1 = mListDMSLAT.value(0);
+	mCCDMSLatitude2 = mListDMSLAT.value(1);
+	mCCDMSLatitude3 = mListDMSLAT.value(2);
+	QString msg = QString("%1").arg(mCCDMSLatitude3);
+	msg = msg.left(msg.indexOf('.'));
+	mCCDMSLatitude3 = msg;
+
+	QStringList mListDMSLON = mDMSLon.split(colonPattern);
+	mCCDMSLongitude1 = mListDMSLON.value(0);
+	mCCDMSLongitude2 = mListDMSLON.value(1);
+	mCCDMSLongitude3 = mListDMSLON.value(2);
+	QString msg1 = QString("%1").arg(mCCDMSLongitude3);
+	msg1 = msg1.left(msg1.indexOf('.'));
+	mCCDMSLongitude3 = msg1;
+
+	if (mConvertorFrom == "Convertor") {
+		m_active = false;
+		emit activeChanged();
+		emit dataLoaded();
+	} else if (mConvertorFrom == "Direction") {
+		emit directionServiceDataLoaded();
+	} else if (mConvertorFrom == "Search" || mConvertorFrom == "Map"
+			|| mConvertorFrom == "NoOutLine") {
+		if (mConvertorFrom != "NoOutLine")
+			ClearMapdata();
+
+		mMapData = new MapData();
+		if (mCCMakani.length() > 5) {
+			drawPinOnMap("map_entrance.png", mCCLatitude + "," + mCCLongitude,
+					mCCMakani, mPinTypeSingle, NULL);
+		} else {
+			drawPinOnMap("map_pin.png", mCCLatitude + "," + mCCLongitude,
+					mCCUAENG, mPinTypeSingle, NULL);
+		}
+
+		if (mConvertorFrom != "NoOutLine") {
+			GetBuildingOutLine_EntrancePoints(mCCLatitude, mCCLongitude, false,
+					false);
+		} else {
+			m_active = false;
+			emit activeChanged();
+		}
+	} else if (mConvertorFrom == "DirectionMyLocation") {
+		mGetMyLocation = mCCUAENG;
+		emit getMyLocationDone();
+
+		m_active = false;
+		emit activeChanged();
+	} else if (mConvertorFrom == "NoOutLineMultiplePin") {
+		myMapView->mapData()->geographic(mLastFocusID)->setProperty("clickDone",
+				QVariant("false"));
+		myMapView->mapData()->geographic(mLastFocusID)->setProperty("pintype",
+				"singlepin");
+		myMapView->mapData()->geographic(mLastFocusID)->setName(mCCUAENG);
+		m_active = false;
+		emit activeChanged();
+	}
+}
+QString WebServicesAPI::getNODATA() {
+	return mNODATA;
+}
+QString WebServicesAPI::getCCMakani() {
+	return mCCMakani;
+}
+QString WebServicesAPI::getCCUAENG() {
+	return mCCUAENG;
+}
+QString WebServicesAPI::getCCUTM1() {
+	return mCCUTM1;
+}
+QString WebServicesAPI::getCCUTM2() {
+	return mCCUTM2;
+}
+QString WebServicesAPI::getCCDLTM1() {
+	return mCCDLTM1;
+}
+QString WebServicesAPI::getCCDLTM2() {
+	return mCCDLTM2;
+}
+QString WebServicesAPI::getCCLatitude() {
+	return mCCLatitude;
+}
+QString WebServicesAPI::getCCLongitude() {
+	return mCCLongitude;
+}
+QString WebServicesAPI::getCCDMSLatitude1() {
+	return mCCDMSLatitude1;
+}
+QString WebServicesAPI::getCCDMSLatitude2() {
+	return mCCDMSLatitude2;
+}
+QString WebServicesAPI::getCCDMSLatitude3() {
+	return mCCDMSLatitude3;
+}
+QString WebServicesAPI::getCCDMSLongitude1() {
+	return mCCDMSLongitude1;
+}
+QString WebServicesAPI::getCCDMSLongitude2() {
+	return mCCDMSLongitude2;
+}
+QString WebServicesAPI::getCCDMSLongitude3() {
+	return mCCDMSLongitude3;
+}
+
+void WebServicesAPI::parseGetMakaniNo(QString data) {
+
+// Load the JSON data
+	JsonDataAccess jda;
+	QVariant list = jda.loadFromBuffer(data);
+	QVariantMap map;
+	mm_model->clear();
+	mlistSearchMakani.clear();
+	for (qint64 i = 0; i < list.Size; i++) {
+		if (list.toMap().value("MAKANI").toList().value(i).toMap().value(
+				"MAKANINO").toString() == "") {
+			break;
+		} else {
+			QVariantMap entry;
+			entry["MAKANINO"] =
+					list.toMap().value("MAKANI").toList().value(i).toMap().value(
+							"MAKANINO").toString();
+
+			mlistSearchMakani.append(
+					list.toMap().value("MAKANI").toList().value(i).toMap().value(
+							"MAKANINO").toString());
+		}
+	}
+}
+
+GroupDataModel * WebServicesAPI::mymodel() {
+	return mm_model;
+}
+GroupDataModel * WebServicesAPI::mymodelStreet() {
+	return mm_modelStreet;
+}
+GroupDataModel * WebServicesAPI::mymodelcommunity() {
+	return mm_modelCommunity;
+}
+GroupDataModel * WebServicesAPI::mymodelcategory() {
+	return mm_modelcategory;
+}
+
+GroupDataModel * WebServicesAPI::mymodelBuiding() {
+	return mm_modelBuiding;
+}
+
+GroupDataModel * WebServicesAPI::mymodelservice() {
+	return mm_modelservice;
+}
+DataModel * WebServicesAPI::mymodelpoinearby() {
+	return mm_modelpoinearby;
+}
+
+
+
+void WebServicesAPI::searchDataFilter(QString words, QString from) {
+	mm_model->clear();
+
+	dataFilter(words, from);
+}
+void WebServicesAPI::dataFilter(QString words, QString from) {
+	QVariantMap entry;
+	if (words.length() > 3) {
+		for (qint64 i = 0; i < mlistSearchMakani.size(); i++) {
+
+			if (mlistSearchMakani.value(i).toString().startsWith(words,
+					Qt::CaseInsensitive)) {
+
+				entry["Makani"] = mlistSearchMakani.value(i).toString();
+
+				mm_model->insert(entry);
+				emit modelchanged();
+
+			} else {
+			}
+		}
+	}
+	m_active = false;
+}
+void WebServicesAPI::searchDataFilterForService(QString words, QString from) {
+	mm_modelservice->clear();
+
+	dataFilterForService(words, from);
+}
+void WebServicesAPI::dataFilterForService(QString words, QString from) {
+	QVariantMap entry;
+	qDebug() << "mServiceResponseId  dataFilterForService is:"
+			<< mServiceResponseId.size();
+
+	QString mServiceName;
+	QString mServiceId;
+
+	for (int i = 0; i < mServiceResponseId.size(); i++) {
+		if (getValueFor("mLanguageCode", "en") == "en") {
+			mServiceName = mServiceResponseId.value(i).toMap().value(
+					"SERVICE_NAME_E").toString();
+			mServiceId =
+					mServiceResponseId.value(i).toMap().value("SERVICE_ID").toString();
+
+
+		} else {
+			mServiceName = mServiceResponseId.value(i).toMap().value(
+					"SERVICE_NAME_A").toString();
+			mServiceId =
+					mServiceResponseId.value(i).toMap().value("SERVICE_ID").toString();
+
+		}
+		if (words.length() > 0) {
+			if (mServiceName.contains(words, Qt::CaseInsensitive)) {
+
+				entry["Servicename"] = mServiceName;
+				entry["ServiceId"] = mServiceId;
+				mm_modelservice->insert(entry);
+				emit modelservicechanged();
+			}
+		}
+	}
+	m_active = false;
+
+}
+
+bool WebServicesAPI::searchDataFilterCategory(QString words, QString from) {
+	mm_modelcategory->clear();
+	return dataFilterCategory(words, from);
+}
+bool WebServicesAPI::dataFilterCategory(QString words, QString from) {
+	QVariantMap entry;
+	if (mCategoryResponseId.size() == 0) {
+		return false;
+	}
+	for (qint64 i = mCategoryResponseId.size() - 1; i >= 0; i--) {
+
+		QString mName;
+		if (getValueFor("mLanguageCode", "en") == "en") {
+			mName = mCategoryResponseId.value(i).toMap().value(
+					"CATEGORY_NAME_E").toString();
+		} else {
+			mName = mCategoryResponseId.value(i).toMap().value(
+					"CATEGORY_NAME_A").toString();
+		}
+
+		if (words.length() > 0 && mName.contains(words, Qt::CaseInsensitive)) {
+
+			entry["CategoryId"] = mCategoryResponseId.value(i).toMap().value(
+					"CATEGORY_ID").toString();
+			entry["Category"] = mName;
+			mm_modelcategory->insert(entry);
+			emit modelcategorychanged();
+
+		} else {
+
+			entry["CategoryId"] = mCategoryResponseId.value(i).toMap().value(
+					"CATEGORY_ID").toString();
+			entry["Category"] = mName;
+
+			mm_modelcategory->insert(entry);
+			emit modelcategorychanged();
+
+		}
+	}
+	return true;
+
+}
+/*
+ * Sets the number into contacts and invoke the contacts view.
+ * @param image_name image to be set on marker
+ * @param latlng latitude,logitude to where pin should be drop.
+ * @param title title to be set on caption label
+ * @param pintype type of image single,multiple...
+ * @param dataMap set of data to be set on mapdata.
+ */
+void WebServicesAPI::drawPinOnMap(QString image_name, QString latlng,
+		QString title, qint64 pintype, QVariant dataMap) {
+	QString commaPattern(",");
+	QStringList mListCoord = latlng.split(commaPattern);
+
+	QString lat = mListCoord.value(0);
+	QString lng = mListCoord.value(1);
+
+	QLocale c(QLocale::C);
+	GeoLocation* newDropPin = new GeoLocation();
+	newDropPin->setLatitude(c.toDouble(lat));
+	newDropPin->setLongitude(c.toDouble(lng));
+
+	newDropPin->setAltitude(0);
+	mListLat.append(c.toDouble(lat));
+	mListLng.append(c.toDouble(lng));
+	if (pintype == mPinTypeMultiple) {
+		mMarker = Marker(
+				QDir::currentPath() + "/app/native/assets/images//map/"
+						+ image_name, QSize(60, 60),
+				QPoint(c.toDouble(lat), c.toDouble(lng)),
+				QPoint(c.toDouble(lat) + 5, c.toDouble(lng) - 70));
+		newDropPin->setMarker(mMarker);
+		QVariant data("multiple");
+		newDropPin->setProperty("pintype", data);
+		newDropPin->setProperty("clickDone", QVariant("false"));
+		newDropPin->setProperty("attributes", dataMap);
+		newDropPin->setProperty("pin_name", title);
+
+		myMapView->mapData()->add(newDropPin);
+		setZoomLevelForMap(NULL);
+
+	} else if (pintype == mPinTypeEntrance) {
+		mMarker = Marker(
+				QDir::currentPath() + "/app/native/assets/images//map/"
+						+ image_name, QSize(60, 60),
+				QPoint(c.toDouble(lat), c.toDouble(lng)),
+				QPoint(c.toDouble(lat) + 5, c.toDouble(lng) - 70));
+		newDropPin->setMarker(mMarker);
+		QVariant data("entrancepin");
+		newDropPin->setProperty("pintype", data);
+
+
+		mMapData->add(newDropPin);
+		newDropPin->setName(title);
+		myMapView->mapData()->add(newDropPin);
+		setZoomLevelForMap(mMapData);
+	} else if (pintype == mPinTypeSingle) {
+
+		mMarker = Marker(
+				QDir::currentPath() + "/app/native/assets/images//map/"
+						+ image_name, QSize(60, 60),
+				QPoint(c.toDouble(lat), c.toDouble(lng)),
+				QPoint(c.toDouble(lat) + 5, c.toDouble(lng) - 70));
+		newDropPin->setMarker(mMarker);
+		QVariant data("singlepin");
+		newDropPin->setProperty("pintype", data);
+
+		mMapData->add(newDropPin);
+		newDropPin->setName(title);
+		myMapView->mapData()->add(newDropPin);
+		setZoomLevelForMap(mMapData);
+
+	} else if (pintype == mPinTypeRoutePoint) {
+
+		mMarker = Marker(
+				QDir::currentPath() + "/app/native/assets/images//map/"
+						+ image_name, QSize(60, 60),
+				QPoint(c.toDouble(lat), c.toDouble(lng)),
+				QPoint(c.toDouble(lat) + 5, c.toDouble(lng) - 70));
+		newDropPin->setMarker(mMarker);
+		QVariant data("routepin");
+		newDropPin->setProperty("pintype", data);
+		newDropPin->setProperty("clickDone", QVariant("false"));
+		newDropPin->setProperty("pin_name", title);
+		newDropPin->setProperty("attributes", dataMap);
+
+		mMapData->add(newDropPin);
+		myMapView->mapData()->add(newDropPin);
+		setZoomLevelForMap(mMapData);
+
+	}
+	myMapView->setCaptionGoButtonVisible(true);
+
+}
+/*
+ * Assigning a reference to a qml mapview object name in order to be used from c++.
+ * @param mapObject mapview object name form qml.
+ */
+void WebServicesAPI::getMyObject(QObject* mapObject) {
+	myMapView = qobject_cast<MapView*>(mapObject);
+
+}
+
+/**
+ * Calculates the appropriate altitude for a map to show the entire bounding
+ * box within the given window dimensions.
+ *
+ * @param box The box containing everything that should be visible on the map's
+ * viewport.
+ * @param windowDimensions The pixel size of the map's viewport.
+ */
+void WebServicesAPI::setZoomLevelForMap(MapData* mMapData) {
+
+	BoundingBox box;
+	if (mMapData == NULL) {
+
+		box = myMapView->mapData()->boundingBox(true);
+	} else {
+		try {
+			box = mMapData->boundingBox(true);
+		} catch (const std::bad_exception &) {
+			box = myMapView->mapData()->boundingBox(true);
+		}
+	}
+
+	myMapView->setLocation(box.center());
+	QSize windowDimensions = myMapView->viewProperties().windowSize();
+	double calculatedAltitude;
+
+	double widthDensity = box.width() / windowDimensions.width();
+	double altFromWidth = 158899028.4 * widthDensity;
+
+	double heightDensity = box.height() / windowDimensions.height();
+	double altFromHeight = 226293941.69 * heightDensity;
+	calculatedAltitude = qMax(altFromWidth, altFromHeight);
+	myMapView->setAltitude(calculatedAltitude);
+}
+/*
+ *buidding outline will be drawn based on Geolocation data with prespecified zoom.
+ *@param listlat will contain List of different latitudes.
+ *@param listlon will contain List of different longitude.
+ *@param  name   optional...
+ */
+void WebServicesAPI::drawBulidingOutLine(QList<float> listLat,
+		QList<float> listLon, QString name) {
+	isOutlineBuilding = true;
+	Polyline mPolylineBuildingInfo;
+
+	for (qint64 i = 0; i < listLat.size(); i++) {
+		mPolylineBuildingInfo.append(
+				Coordinate(listLat.value(i), listLon.value(i)));
+		isOutlineBuilding = false;
+	}
+
+	GeoPolygon* mGeoPolygonBuildingInfo = new GeoPolygon();
+	mGeoPolygonBuildingInfo->setOuterBoundary(mPolylineBuildingInfo);
+
+	StyleSheet styles;
+	Style polylines;
+	polylines.setEdgeStyle(EdgeStyle::Solid);
+	polylines.setEdgeSize(EdgeSize::XLarge);
+	polylines.setEdgeColor(0x8F00B7FF);
+	polylines.setFillColor(0x3B00B7FF);
+	styles.addStyleForClass(mGeoPolygonBuildingInfo, polylines);
+
+	myMapView->mapData()->add(mGeoPolygonBuildingInfo);
+	myMapView->mapData()->setStyles(styles);
+
+	mMapData->add(mGeoPolygonBuildingInfo);
+
+	setZoomLevelForMap(mMapData);
+}
+/* Draws the route from source to destination in map with prespecified zoom.
+ * @param listlat will contain List of different latitudes.
+ * @param listlon will contain List of different longitudes.
+ * @param name optional...
+ */
+void WebServicesAPI::drawRoute(QList<float> listLat, QList<float> listLon,
+		QString name) {
+	isOutlineBuilding = true;
+	Polyline mPolylineBuildingInfo;
+
+	for (qint64 i = 0; i < listLat.size(); i++) {
+		mPolylineBuildingInfo.append(
+				Coordinate(listLat.value(i), listLon.value(i)));
+		isOutlineBuilding = false;
+	}
+
+	GeoPolyline* mGeoPolygonBuildingInfo = new GeoPolyline();
+	mGeoPolygonBuildingInfo->setLine(mPolylineBuildingInfo);
+
+	myMapView->mapData()->add(mGeoPolygonBuildingInfo);
+
+	mMapData->add(mGeoPolygonBuildingInfo);
+
+	setZoomLevelForMap(mMapData);
+}
+
+QList<float>& WebServicesAPI::getListLat() {
+	return mListLat;
+}
+QList<float>& WebServicesAPI::getListLng() {
+	return mListLng;
+}
+bool WebServicesAPI::searchDataFilterCommunity(QString words, QString from) {
+	mm_modelCommunity->clear();
+	return dataFilterCommunity(words, from);
+}
+bool WebServicesAPI::dataFilterCommunity(QString words, QString from) {
+	QVariantMap entry;
+	if (mlistSearchCommunity.size() == 0) {
+		return false;
+	}
+	for (qint64 i = mlistSearchCommunity.size() - 1; i >= 0; i--) {
+		if (words.length() > 0) {
+			if (mlistSearchCommunity.value(i).toString().contains(words,
+					Qt::CaseInsensitive)) {
+				entry["common" + from] =
+						mlistSearchCommunity.value(i).toString();
+				mm_modelCommunity->insert(entry);
+				emit modelcommunitychanged();
+			}
+		} else {
+			entry["common" + from] = mlistSearchCommunity.value(i).toString();
+			mm_modelCommunity->insert(entry);
+			emit modelcommunitychanged();
+		}
+	}
+	return true;
+}
+/*
+ *  Set of pins will be droped for places by category.
+ */
+void WebServicesAPI::showAllPinOfPlacesByCategory() {
+	mPinType = mPinTypeMultiple;
+	mListPOIPrevious.clear();
+	ClearMapdata();
+
+	if (mlistSearchPlaceName.size() == 1) {
+		QVariantMap entry = mlistSearchPlaceName.value(0).toMap();
+
+		QString lat = entry.value("X_COORD").toString();
+		QString lng = entry.value("Y_COORD").toString();
+		QString name;
+		QVariantMap mListdata;
+		if (getValueFor("mLanguageCode", "en") == "en") {
+			name = entry.value("NAME_E").toString();
+		} else {
+			name = entry.value("NAME_A").toString();
+		}
+		mListdata["NAME_E"] = name;
+		mListdata["X_COORD"] = lat;
+		mListdata["Y_COORD"] = lng;
+		mListdata["TEL_NO"] = "";
+		mListdata["FAX_NO"] = "";
+		mListdata["EMAIL"] = "";
+		mListdata["LICENSE_NO"] = "";
+		mListdata["URL"] = "";
+		mListdata["POBOX"] = "";
+		mListPOIPrevious.append(mListdata);
+		setPoiInfoData(name, "", "", "", "", "", "");
+		GetBuildingOutLine_EntrancePoints(lat, lng, true, false);
+
+	} else {
+		for (int i = 0; i < mlistSearchPlaceName.size(); i++) {
+			QVariantMap entry = mlistSearchPlaceName.value(i).toMap();
+
+			QString lat = entry.value("X_COORD").toString();
+			QString lng = entry.value("Y_COORD").toString();
+			QString name;
+			QVariantMap mListdata;
+			if (getValueFor("mLanguageCode", "en") == "en") {
+				name = entry.value("NAME_E").toString();
+			} else {
+				name = entry.value("NAME_A").toString();
+			}
+
+			mListdata["NAME_E"] = name;
+			mListdata["X_COORD"] = lat;
+			mListdata["Y_COORD"] = lng;
+			mListdata["TEL_NO"] = "";
+			mListdata["FAX_NO"] = "";
+			mListdata["EMAIL"] = "";
+			mListdata["LICENSE_NO"] = "";
+			mListdata["URL"] = "";
+			mListdata["POBOX"] = "";
+			mListPOIPrevious.append(mListdata);
+			drawPinOnMap("map_pin.png", lat + "," + lng, name, mPinTypeMultiple,
+					mListdata);
+		}
+	}
+}
+
+void WebServicesAPI::searchDataFilterService(QString words, QString from) {
+	mm_model->clear();
+	dataFilterService(words, from);
+}
+void WebServicesAPI::dataFilterService(QString words, QString from) {
+
+	QVariantMap entry;
+	qDebug() << "mlistSearchPlaceName size  is:" << mlistSearchPlaceName;
+
+	for (qint64 i = mlistSearchPlaceName.size() - 1; i >= 0; i--) {
+		QVariantMap mMap = mlistSearchPlaceName.value(i).toMap();
+		QString name;
+		if (getValueFor("mLanguageCode", "en") == "en") {
+			name = mMap.value("NAME_E").toString();
+		} else {
+			name = mMap.value("NAME_A").toString();
+		}
+		qDebug() << "name is:" << name;
+		if (name.contains(words, Qt::CaseInsensitive)) {
+			mm_model->insert(mMap);
+			emit modelchanged();
+		}
+	}
+}
+bool WebServicesAPI::searchDataFilterStreet(QString words, QString from) {
+	mm_modelStreet->clear();
+	return dataFilterStreet(words, from);
+}
+bool WebServicesAPI::dataFilterStreet(QString words, QString from) {
+	QVariantMap entry;
+	if (mlistSearchStreet.size() == 0) {
+		return false;
+	}
+	for (qint64 i = mlistSearchStreet.size() - 1; i >= 0; i--) {
+		if (words.length() > 0) {
+			if (mlistSearchStreet.value(i).toString().contains(words,
+					Qt::CaseInsensitive)) {
+				entry["common" + from] = mlistSearchStreet.value(i).toString();
+				mm_modelStreet->insert(entry);
+			}
+		} else {
+			entry["common" + from] = mlistSearchStreet.value(i).toString();
+			mm_modelStreet->insert(entry);
+		}
+	}
+	return true;
+	emit modelStreetchanged();
+}
+void WebServicesAPI::searchDataFilterPOI(QString words, QString from) {
+	mm_model->clear();
+	dataFilterPOI(words, from);
+}
+
+void WebServicesAPI::dataFilterPOI(QString words, QString from) {
+	QVariantMap entry;
+
+	for (qint64 i = 0; i < mlistSearchPOI.size(); i++) {
+		QVariantMap mMap = mlistSearchPOI.value(i).toMap();
+		if (getValueFor("mLanguageCode", "en") == "en") {
+
+			QString name = mMap.value("NAME_E").toString();
+			if (name.contains(words, Qt::CaseInsensitive)) {
+
+				mm_model->insert(mMap);
+			}
+		} else {
+			QString name = mMap.value("NAME_A").toString();
+			if (name.contains(words, Qt::CaseInsensitive)) {
+
+				mm_model->insert(mMap);
+
+			}
+		}
+	}
+	emit modelchanged();
+
+}
+bool WebServicesAPI::searchDataFilterBuilding(QString words, QString from) {
+	mm_modelBuiding->clear();
+	return dataFilterBuilding(words, from);
+
+}
+bool WebServicesAPI::dataFilterBuilding(QString words, QString from) {
+	QVariantMap entry;
+	if (mlistSearchBuilding.size() == 0) {
+		return false;
+	}
+	bool ok = true;
+
+	for (qint64 i = 0; i < mlistSearchBuilding.size(); i++) {
+		if (words.length() > 0) {
+			if (mlistSearchBuilding.value(i).toString().contains(words,
+					Qt::CaseInsensitive)) {
+				entry["ADDRESS_E"] = mlistSearchBuilding.value(i).toInt(&ok);
+				mm_modelBuiding->insert(entry);
+			}
+		} else {
+			entry["ADDRESS_E"] = mlistSearchBuilding.value(i).toInt(&ok);
+			mm_modelBuiding->insert(entry);
+		}
+	}
+	return true;
+	emit modelBuidingchanged();
+}
+/*
+ *Notification with a message to be displayed if hasmatch is true  otherwise invisible.
+ *@param hasMatch value true or false
+ */
+void WebServicesAPI::showToast(bool hasMatch) {
+	SystemToast *toast = new SystemToast(this);
+	toast->setPosition(SystemUiPosition::MiddleCenter);
+
+	if (hasMatch) {
+		toast->setBody("No matching data found");
+		toast->show();
+
+	}
+}
+/* Extracts geographical information data from focusid & drops pin on previous and current geolocation with differrnt pin types.
+ *
+ *@param myfocusId Id of the Geolocation that was tapped from qml.
+ */
+void WebServicesAPI::setFouceId(QString myfocuSId) {
+	mapFocusId.clear();
+
+	mapFocusId = myfocuSId;
+
+	QString name = qobject_cast<GeoLocation*>(
+			myMapView->mapData()->geographic(getFouceId()))->name();
+
+	double lat = qobject_cast<GeoLocation*>(
+			myMapView->mapData()->geographic(getFouceId()))->latitude();
+	double lng = qobject_cast<GeoLocation*>(
+			myMapView->mapData()->geographic(getFouceId()))->longitude();
+
+	mapLabelText = name;
+	mapLabelLatitude = QString::number(lat);
+	mapLabelLongitude = QString::number(lng);
+	QString propertyPintType =
+			myMapView->mapData()->geographic(getFouceId())->property("pintype").toString();
+
+	isPOIMultipleTap = false;
+	if (myMapView->mapData()->geographic(getFouceId())->property("clickDone")
+			== "true") {
+		setMulitple("previous");
+
+		ClearMapdata();
+
+
+		mPinType = mPinTypeMultiple;
+		for (int i = 0; i < mListPOIPrevious.size(); i++) {
+
+			QVariant entry = mListPOIPrevious.value(i).toMap();
+			QString lat =
+					mListPOIPrevious.value(i).toMap().value("X_COORD").toString();
+			QString lng =
+					mListPOIPrevious.value(i).toMap().value("Y_COORD").toString();
+			QString name =
+					mListPOIPrevious.value(i).toMap().value("NAME_E").toString();
+			QString location = mListPOIPrevious.value(i).toMap().value(
+					"Location").toString();
+			QString isGreenPin = mListPOIPrevious.value(i).toMap().value(
+					"isGreenPin").toString();
+			QString mapPin;
+			if (checkInvalid(location.replace(" ", "")) == "number")
+				mapPin = "map_entrance.png";
+			else
+				mapPin = "map_pin.png";
+			if (isGreenPin == "true")
+				drawPinOnMap("map_pin_near_by.png", lat + "," + lng, name,
+						mPinTypeMultiple, entry);
+			else
+				drawPinOnMap(mapPin, lat + "," + lng, name, mPinTypeMultiple,
+						entry);
+		}
+	} else {
+		if (propertyPintType == "multiple") {
+
+			mLastFocusID = myfocuSId;
+			setMulitple("multiple");
+			myMapView->mapData()->geographic(getFouceId())->setProperty(
+					"clickDone", QVariant("true"));
+			QVariantMap mMapInfoData = myMapView->mapData()->geographic(
+					getFouceId())->property("attributes").toMap();
+			poiNameValue = mMapInfoData.value("NAME_E").toString().trimmed();
+			emit poiNameDone();
+			poiPhoneValue = mMapInfoData.value("TEL_NO").toString().trimmed();
+			emit poiPhoneDone();
+			poiFaxValue = mMapInfoData.value("FAX_NO").toString().trimmed();
+			emit poiFaxDone();
+			poiEmailValue = mMapInfoData.value("EMAIL").toString().trimmed();
+			emit poiEmailDone();
+			poiLicenseValue =
+					mMapInfoData.value("LICENSE_NO").toString().trimmed();
+			emit poiLicenseDone();
+			poiURLValue = mMapInfoData.value("URL").toString().trimmed();
+			emit poiURLDone();
+			poiPOBoxValue = mMapInfoData.value("POBOX").toString().trimmed();
+			emit poiPOBoxDone();
+
+			mapLabelText =
+					myMapView->mapData()->geographic(getFouceId())->property(
+							"pin_name").toString();
+
+			isPOIMultipleTap = true;
+			myMapView->mapData()->remove("route_line");
+			QString locationName =
+					mMapInfoData.value("Location").toString().trimmed();
+			if (checkInvalid(locationName.replace(" ", "")) == "number") {
+				Marker mMarker = Marker(
+						QDir::currentPath()
+								+ "/app/native/assets/images/map/map_pin.png",
+						QSize(60, 60), QPoint(lat, lng),
+						QPoint(lat + 5, lng - 70));
+
+				qobject_cast<GeoLocation*>(
+						myMapView->mapData()->geographic(getFouceId()))->resetMarker();
+				qobject_cast<GeoLocation*>(
+						myMapView->mapData()->geographic(getFouceId()))->setMarker(
+						mMarker);
+			}
+
+		} else if (propertyPintType == "entrancepin") {
+			setMulitple("entrancepin");
+
+			if (getFouceId() != mLastFocusID) {
+				Marker mMarker =
+						Marker(
+								QDir::currentPath()
+										+ "/app/native/assets/images/map/map_entrance_selected.png",
+								QSize(60, 60), QPoint(lat, lng),
+								QPoint(lat + 5, lng - 70));
+
+				qobject_cast<GeoLocation*>(
+						myMapView->mapData()->geographic(getFouceId()))->resetMarker();
+				qobject_cast<GeoLocation*>(
+						myMapView->mapData()->geographic(getFouceId()))->setMarker(
+						mMarker);
+				if (mLastFocusID.length() > 0) {
+					Marker mMarker =
+							Marker(
+									QDir::currentPath()
+											+ "/app/native/assets/images/map/map_entrance.png",
+									QSize(60, 60), QPoint(lat, lng),
+									QPoint(lat + 5, lng - 70));
+
+					qobject_cast<GeoLocation*>(
+							myMapView->mapData()->geographic(mLastFocusID))->resetMarker();
+					qobject_cast<GeoLocation*>(
+							myMapView->mapData()->geographic(mLastFocusID))->setMarker(
+							mMarker);
+
+				}
+			}
+
+		} else if (propertyPintType == "singlepin") {
+			setMulitple("singlepin");
+
+		} else if (propertyPintType == "routepin") {
+
+			mLastFocusID = myfocuSId;
+			myMapView->mapData()->geographic(getFouceId())->setProperty(
+					"clickDone", QVariant("true"));
+			mapLabelText =
+					myMapView->mapData()->geographic(getFouceId())->property(
+							"pin_name").toString();
+			setMulitple("routepin");
+		}
+
+	}
+	mapDataFromFocusId = mapLabelLatitude + "," + mapLabelLongitude;
+	mLastFocusID = myfocuSId;
+}
+
+const QString WebServicesAPI::getFouceId() {
+	return mapFocusId;
+}
+QString WebServicesAPI::getMapCaptionText() {
+	return mapLabelText;
+}
+QString WebServicesAPI::getMapCaptionLatitude() {
+	return mapLabelLatitude;
+}
+QString WebServicesAPI::getMapCaptionLongitude() {
+	return mapLabelLongitude;
+}
+bool WebServicesAPI::getOutlineBuilding() {
+	return isOutlineBuilding;
+}
+QStringList WebServicesAPI::getUAENGData() {
+	return mLisToSend;
+}
+void WebServicesAPI::drawSingleBuilding(QString lat, QString lng) {
+	Polyline mPolylineBuildingInfo;
+	QLocale c(QLocale::C);
+
+	GeoPolygon* mGeoPolygonBuildingInfo = new GeoPolygon();
+	mGeoPolygonBuildingInfo->setName("");
+	mGeoPolygonBuildingInfo->setOuterBoundary(mPolylineBuildingInfo);
+	myMapView->mapData()->add(mGeoPolygonBuildingInfo);
+	myMapView->setAltitude(50);
+	myMapView->setLatitude(c.toDouble(lat));
+	myMapView->setLongitude(c.toDouble(lng));
+}
+/*
+ * Shows dialog for category if true otherwise dialog for service if false.
+ */
+void WebServicesAPI::ShowDialog(bool isCat) {
+	if (isCat) {
+		listCategory->show();
+	} else {
+		listService->show();
+	}
+}
+QStringList WebServicesAPI::getCategoryDialogdata() {
+
+	return mListDialogData;
+}
+void WebServicesAPI::getDropDownServic(QObject* serviceObject) {
+	ddTypeService = qobject_cast<DropDown*>(serviceObject);
+}
+
+QString WebServicesAPI::getServiceId() {
+	return mServiceIdfromQml;
+}
+QString WebServicesAPI::setServiceId(QString myServiceId) {
+	mServiceIdfromQml = myServiceId;
+	return mServiceIdfromQml;
+}
+QVariantList WebServicesAPI::getBuildingListData() {
+	return mlistSearchBuilding;
+}
+/*
+ *Returns the input text whether it is number or charecter null if none of the criteria matches.
+ *@params mAdvanceSearchText text input to be checked
+ */
+QString WebServicesAPI::checkAdvanceSearchNumber(QString mAdvanceSearchText) {
+
+	QString isNumOrChr;
+	QString strWithoutSpace = mAdvanceSearchText.replace(" ", "");
+	QRegExp mQRegExpForNumber("^[0-9]{2,10}$");
+	QRegExp mQRegExpForText("^[A-Za-z]{2,10}$");
+	QRegExp mRegexpForUAENG40R(
+			"^(?:40R|40R |40r|40r )(?:CN |CN|cn|cn )(( )?\\d){6,10}$");
+	QRegExp mRegExpForUAENGCN("^(?:CN |CN|cn|cn )(( )?\\d){6,10}$");
+
+	if (mQRegExpForNumber.exactMatch(strWithoutSpace)) {
+		if (strWithoutSpace.length() == 3) {
+			GetMakaniNo(strWithoutSpace);
+		}
+		isNumOrChr = "number";
+	} else {
+		if (strWithoutSpace.length() == 3) {
+			GetPOIInfo(strWithoutSpace, "E", true, "autoComplete");
+		}
+		isNumOrChr = "charecter";
+	}
+	return isNumOrChr;
+}
+/*
+ *Returns the input text whether it is number,charecter,POI null if none of the criteria matches.
+ *@params mValue text input to be checked
+ */
+QString WebServicesAPI::checkInvalid(QString mValue) {
+	QString isValid = "";
+	QRegExp mQRegExpForNumber("^[0-9]{10}$");
+	QRegExp mQRegExpForText("^[A-Za-z ]+$");
+	QRegExp mRegexpForUAENG40R(
+			"^(?:40R|40R |40r|40r )(?:CN |CN|cn|cn )(( )?\\d){6,10}$");
+	QRegExp mRegExpForUAENGCN("^(?:CN |CN|cn|cn )(( )?\\d){6,10}$");
+
+	if (mQRegExpForNumber.exactMatch(mValue)) {
+		isValid = "number";
+	} else if (mQRegExpForText.exactMatch(mValue)) {
+		isValid = "text";
+	} else if (mRegexpForUAENG40R.exactMatch(mValue)
+			|| mRegExpForUAENGCN.exactMatch(mValue)) {
+		isValid = "UAENG";
+	}
+
+	return isValid;
+}
+/*
+ *Returns  checks input text whether it is valid makani number or UAENG ,POI null if none of the criteria matches.
+ *@params mValue text input to be checked
+ */
+
+QString WebServicesAPI::CommonSearchvalidation(QString mValue) {
+	QString isValid = "";
+	QRegExp mQRegExpForOnlyNumber("^[0-9]{0,100}$");
+	QRegExp mQRegExpForNumber("^[0-9]{10,10}$");
+	QRegExp mQRegExpForText("^[A-Za-z ]+$");
+	QRegExp mRegexpForUAENG40R(
+			"^(?:40R|40R |40r|40r )(?:CN |CN|cn|cn )(( )?\\d){6,10}$");
+	QRegExp mRegExpForUAENGCN("^(?:CN |CN|cn|cn )(( )?\\d){6,10}$");
+	QRegExp mQRegExpForAlphaNumber("^(a-zA-Z0-9\\s*)*$");
+
+	if (mQRegExpForOnlyNumber.exactMatch(mValue)) {
+		if (mQRegExpForNumber.exactMatch(mValue)) {
+			isValid = "number";
+		} else {
+			isValid = "notValidMakani";
+		}
+	} else if (mRegexpForUAENG40R.exactMatch(mValue)
+			|| mRegExpForUAENGCN.exactMatch(mValue)) {
+		isValid = "UAENG";
+	} else {
+		isValid = "text";
+	}
+
+	return isValid;
+}
+QString WebServicesAPI::validateString(QString mValue) {
+	QString isValid = "";
+	QRegExp mQRegExpForNumber("^[0-9]{10}$");
+	QRegExp mQRegExpForText("^[A-Za-z ]+$");
+	QString myPatternWithZone =
+			"^(?:[0-9]\\s*){2}(?:[A-Za-z ]{1}\\s*)(?:[A-za-z]\\s*){2}(( )?\\d\\s*){6,10}$";
+	QRegExp mRegexpWithZone(myPatternWithZone);
+
+	if (mQRegExpForNumber.exactMatch(mValue)) {
+		isValid = "number";
+	} else if (mRegexpWithZone.exactMatch(mValue)) {
+		isValid = "UAENG";
+	} else if (mQRegExpForText.exactMatch(mValue)) {
+		isValid = "text";
+	}
+	return isValid;
+}
+/*
+ * Return and Convert  any  valid string into UAENG value
+ */
+QString WebServicesAPI::ConvertToUAENG(QString myStr) {
+	QRegExp rxfor40R;
+	QRegExp rxforCN;
+	QString finalStr;
+	QString myPattern =
+			"^(?:40R|40R |40r|40r )(?:CN |CN|cn|cn )(( )?\\d){6,10}$";
+	QString myPattern2 = "^(?:CN |CN|cn|cn )(( )?\\d){6,10}$";
+
+	QString myPatternWithZone =
+			"^(?:[0-9]\\s*){2}(?:[A-Za-z ]{1}\\s*)(?:[A-za-z]\\s*){2}(( )?\\d\\s*){6,10}$";
+	QRegExp mRegexpWithZone(myPatternWithZone);
+
+	rxfor40R.setPattern(myPattern);
+	rxforCN.setPattern(myPattern2);
+	rxfor40R.setMinimal(true);
+	rxforCN.setMinimal(true);
+
+	if (rxfor40R.exactMatch(myStr.replace(" ", ""))) {
+		finalStr = getConvertedValue(rxfor40R, myStr.replace(" ", ""), true);
+	} else {
+		//if starts with CN then append 40R
+		if (rxforCN.exactMatch(myStr.replace(" ", ""))) {
+			finalStr = getConvertedValue(rxforCN, myStr, false);
+		} else if (mRegexpWithZone.exactMatch(myStr)) {
+			finalStr = myStr;
+		} else {
+			finalStr = "";
+		}
+
+	}
+
+	return finalStr;
+}
+/*
+ * returns the converted value of uaeng
+ * @Param checkrx Regular expression to be matched with mydatastr.
+ * @param mydatastr string value to be matched against.
+ * @param isFromFirst True Indicates string args tarts with zone 40R otherwise without Zone(CN).
+ */
+QString WebServicesAPI::getConvertedValue(QRegExp checkrx, QString mydataStr,
+		bool isFromFirst) {
+	QString mWholeString, finalStr;
+	if (checkrx.indexIn(mydataStr) != -1) {
+		mWholeString = checkrx.cap(0);
+	}
+//starts  with 40R so isFromFirst true
+	if (isFromFirst) {
+		QString mymid, myEndStr, myStrfirstPart, myStrLastPart, myNumber;
+		myNumber = mWholeString.replace(" ", "").mid(5);
+		mymid = mWholeString.replace(" ", "").mid(5);
+
+		if (myNumber.length() == 6) {
+			//divide by two then append remaining equally to easting northing
+			myStrfirstPart = myNumber.right(3);
+			myStrLastPart = myNumber.left(3);
+			for (int i = 0; i < 2; i++) {
+				myStrfirstPart.append("5");
+				myStrLastPart.append("5");
+			}
+			myEndStr = "40R CN " + myStrLastPart + " " + myStrfirstPart;
+			finalStr = myEndStr;
+		} else if (myNumber.length() == 8) {
+			//divide by two then append remaining equally to easting and northing
+			myStrfirstPart = myNumber.right(4);
+			myStrLastPart = myNumber.left(4);
+			for (int i = 0; i < 1; i++) {
+				myStrfirstPart.append("5");
+				myStrLastPart.append("5");
+			}
+			myEndStr = "40R CN " + myStrLastPart + " " + myStrfirstPart;
+			finalStr = myEndStr;
+
+		} else if (myNumber.length() == 10) {
+			myEndStr = "40R CN " + mWholeString.mid(5).left(5) + " "
+					+ mWholeString.right(5);
+			finalStr = myEndStr;
+		}
+	} else {
+		//CN part
+		QString mymid, myEndStr, myStrfirstPart, myStrLastPart, myNumber;
+		myNumber = mWholeString.replace(" ", "").mid(2);
+		mymid = mWholeString.replace(" ", "").mid(2);
+
+		if (myNumber.length() == 6) {
+			//divide by two then append remaining equally to easting northing
+			myStrfirstPart = myNumber.right(3);
+			myStrLastPart = myNumber.left(3);
+			for (int i = 0; i < 2; i++) {
+				myStrfirstPart.append("5");
+				myStrLastPart.append("5");
+			}
+			myEndStr = "40R CN " + myStrLastPart + " " + myStrfirstPart;
+			finalStr = myEndStr;
+		} else if (myNumber.length() == 8) {
+			//divide by two then append remaining equally to easting northing
+			myStrfirstPart = myNumber.right(4);
+			myStrLastPart = myNumber.left(4);
+			for (int i = 0; i < 1; i++) {
+				myStrfirstPart.append("5");
+				myStrLastPart.append("5");
+			}
+			myEndStr = "40R CN " + myStrLastPart + " " + myStrfirstPart;
+			finalStr = myEndStr;
+		} else if (myNumber.length() == 10) {
+			myEndStr = "40R CN " + myNumber.mid(0, 5) + " "
+					+ myNumber.mid(5, 5);
+			finalStr = myEndStr;
+		}
+	}
+	return finalStr;
+}
+
+bool WebServicesAPI::isCharecteresOnly(QString myStr) {
+	QRegExp mQRegExpForCharectres("^[A-Za-z]$");
+	return mQRegExpForCharectres.exactMatch(myStr);
+}
+
+bool WebServicesAPI::isNumberOnly(QString myStr) {
+	QRegExp mQRegExpForCharectres("^[0-9]*");
+	return mQRegExpForCharectres.exactMatch(myStr);
+}
+bool WebServicesAPI::isValidUTMNumber(QString myStr) {
+	QRegExp mQRegExpForCharectres("[0-9]+([,\\.][0-9]+)?");
+	return mQRegExpForCharectres.exactMatch(myStr);
+}
+/*
+ * Returns the contact details data based on id.
+ * @param id contact id from qml when contact selected.
+ */
+QString WebServicesAPI::getcontactNumber(qint64 id) {
+
+	QString placeNumber = "";
+	contacts::ContactService mservice;
+	contacts::Contact contact_info = mservice.contactDetails(id);
+	QString firstName = contact_info.firstName();
+
+	QList<contacts::ContactAttribute> phoneno_list =
+			contact_info.filteredAttributes(
+					contacts::AttributeKind::OrganizationAffiliation);
+	QString data = phoneno_list.value(0).value();
+	QString datatemp = data;
+	if (data.length() > 0) {
+		placeNumber = data;
+	}
+
+	return data;
+}
+/*
+ * Extracts the contact details with the provided contact id and checks the type of data is makani or UAEG shows dilog if no macth/data found.
+ * @param id contact id from qml when contact selected.
+ */
+void WebServicesAPI::getcontactNumberFromAdvanceSearch(qint64 id) {
+	QString placeNumber = "";
+	contacts::ContactService mservice;
+	contacts::Contact contact_info = mservice.contactDetails(id);
+	QString firstName = contact_info.firstName();
+
+	QList<contacts::ContactAttribute> phoneno_list =
+			contact_info.filteredAttributes(
+					contacts::AttributeKind::OrganizationAffiliation);
+	QString data = phoneno_list.value(0).value();
+	if (data.length() > 0) {
+		placeNumber = data;
+		ClearMapdata();
+		if (checkInvalid(data.replace(" ", "")) == "number") {
+			GetBuildingInfo(placeNumber);
+		} else if (validateString(data.replace(" ", "")) == "UAENG") {
+			//UAENG
+			UAENGtoCoordinates(placeNumber, "54F000E53AA3DB91BB938B274D6C3A18",
+					"Map");
+		}
+		setPoiInfoData("", "", "", "", "", "", "");
+	} else {
+		showMySystemDialog(tr("No Data Found"));
+	}
+}
+/*
+ * Called from direction qml to call web service based on value and type.
+ * @param value combination of latitude and logitude with space.
+ * @param type type of value makni or UAENG.
+ */
+void WebServicesAPI::getDirectionLatLon(QString value, QString type) {
+	QString coordinateX;
+	QString coordinateY;
+	if (type == "UAENG") {
+		UAENGtoCoordinates(value, "54F000E53AA3DB91BB938B274D6C3A18",
+				"Direction");
+	} else if (type == "MAKANI") {
+		QString spacePattern(" ");
+		QStringList mListCoord = value.split(spacePattern);
+		coordinateX = mListCoord.value(0);
+		coordinateY = mListCoord.value(1);
+		isFromConverter = true;
+		getCoordinateConversion(coordinateX, coordinateY, "MAKANI", "Direction",
+				false);
+	}
+
+}
+QString WebServicesAPI::getBuildingToDirectionLatLng(bool isfrom) {
+	if (isfrom) {
+		return mBuildingLATLNG;
+	} else {
+		return mBuildingLATLNGTo;
+	}
+
+}
+void WebServicesAPI::setBuildingToDirectionLatLng(QString latlng, bool isfrom) {
+	if (isfrom) {
+		mBuildingLATLNG = latlng;
+
+	} else {
+		mBuildingLATLNGTo = latlng;
+
+	}
+}
+
+bool WebServicesAPI::checkisFrom() {
+	return isFromBuilding;
+}
+void WebServicesAPI::setcheckisFrom(bool isfrom) {
+
+	isFromBuilding = isfrom;
+}
+void WebServicesAPI::setcheckisFromAdvanceSearch(bool isfrom) {
+	isFromDirectionBuilding = isfrom;
+}
+bool WebServicesAPI::checkisFromAdvanceSearch() {
+	return isFromDirectionBuilding;
+}
+/*
+ * Returns the contructed url with starting location, end location and transit mode.
+ * @param startLocation latitude,logitude.
+ * @param endLoaction latitude,logitude.
+ * @param transitMode mode of transit.
+ */
+QString WebServicesAPI::getUrl(QString startLocation, QString endLocation,
+		QString transitMode) {
+	QString mStringRouteURL = "";
+	QString mStringLanguage = "";
+
+	if (getValueFor("mLanguageCode", "en") == "en") {
+		mStringLanguage = "";
+	} else {
+		mStringLanguage = "&language=ar";
+	}
+
+	if (transitMode == "transit") {
+
+		qint64 msec = QDateTime::currentMSecsSinceEpoch() / 1000;
+		mStringRouteURL =
+				"http://maps.googleapis.com/maps/api/directions/json?";
+		mStringRouteURL.append("origin=");
+		mStringRouteURL.append(startLocation);
+		mStringRouteURL.append("&destination=");
+		mStringRouteURL.append(endLocation);
+		mStringRouteURL.append("&sensor=false&units=metric&mode=");
+		mStringRouteURL.append(transitMode);
+		mStringRouteURL.append("&departure_time=");
+		mStringRouteURL.append(QString::number(msec));
+		mStringRouteURL.append(mStringLanguage);
+	} else {
+
+		mStringRouteURL =
+				"http://maps.googleapis.com/maps/api/directions/json?";
+		mStringRouteURL.append("origin=");
+		mStringRouteURL.append(startLocation);
+		mStringRouteURL.append("&destination=");
+		mStringRouteURL.append(endLocation);
+		mStringRouteURL.append("&sensor=false&units=metric&mode=");
+		mStringRouteURL.append(transitMode);
+		mStringRouteURL.append(mStringLanguage);
+	}
+	mStringRouteURL = mStringRouteURL.replace(" ", "%20");
+	return mStringRouteURL;
+}
+/*
+ * web service to get the response of google routes.
+ * @param url url to pass in.
+ */
+void WebServicesAPI::callGoogleRoutes(QString url) {
+	m_active = true;
+	emit activeChanged();
+	QNetworkAccessManager *manager = new QNetworkAccessManager(this);
+	connect(manager, SIGNAL(finished(QNetworkReply*)), this,
+			SLOT(replyFinished(QNetworkReply*)));
+
+	manager->get(QNetworkRequest(QUrl(url)));
+}
+void WebServicesAPI::replyFinished(QNetworkReply* reply) {
+	QByteArray replyBytes = reply->readAll();
+
+	QString fromSource;
+	QString ToDestination;
+	QString TotalDuration;
+	QString TotalDistance;
+	mStepsData.clear();
+	mFromToDirectionData.clear();
+	mPolylineData.clear();
+	decodedpolylat.clear();
+	decodedpolylng.clear();
+	JsonDataAccess jda;
+	QVariant mRouteDataResponse = jda.loadFromBuffer(replyBytes);
+	QVariantList mRoutesList =
+			mRouteDataResponse.toMap().value("routes").toList();
+	QVariantList mListLegs;
+	QVariantList mListSteps;
+
+	if (mRouteDataResponse.toMap().value("status").toString() == "NOT_FOUND"
+			|| mRouteDataResponse.toMap().value("status").toString()
+					== "ZERO_RESULTS") {
+	} else {
+
+		mListLegs = mRoutesList.value(0).toMap().value("legs").toList();
+
+		fromSource =
+				mListLegs.value(0).toMap().value("start_address").toString();
+		ToDestination =
+				mListLegs.value(0).toMap().value("end_address").toString();
+		TotalDistance =
+				mListLegs.value(0).toMap().value("distance").toMap().value(
+						"text").toString();
+		TotalDuration =
+				mListLegs.value(0).toMap().value("duration").toMap().value(
+						"text").toString();
+
+		mFromToDirectionData.append(fromSource);
+		mFromToDirectionData.append(ToDestination);
+		mFromToDirectionData.append(TotalDuration);
+		mFromToDirectionData.append(TotalDistance);
+
+		mListSteps = mRoutesList.value(0).toMap().value("legs").toList().value(
+				0).toMap().value("steps").toList();
+		QList<QVariant> mlist;
+
+		for (int i = 0; i < mListSteps.size(); i++) {
+
+			if (getValueFor("mLanguageCode", "en") == "en") {
+				mStepsData.append(
+						QString::number(i + 1) + ". "
+								+ mListSteps.value(i).toMap().value(
+										"html_instructions").toString()
+								+ "&#10;");
+			} else {
+				mStepsData.append(
+						mListSteps.value(i).toMap().value("html_instructions").toString()
+								+ "&#10;");
+			}
+
+			mPolylineData.append(
+					mListSteps.value(i).toMap().value("polyline").toMap().value(
+							"points").toString());
+			decodePoly(
+					mListSteps.value(i).toMap().value("polyline").toMap().value(
+							"points").toString());
+
+			//use &#10 to insert new line
+		}
+	}
+	m_active = false;
+	emit activeChanged();
+	emit routeDataLoaded();
+}
+QString WebServicesAPI::getStepsData() {
+	return mStepsData;
+}
+QStringList WebServicesAPI::getFromToData() {
+	return mFromToDirectionData;
+}
+QString WebServicesAPI::myPolylineData() {
+	return mPolylineData;
+}
+/*
+ *decode  Data from call google route response.
+ *@param encoded data from webs ervice response.
+ */
+void WebServicesAPI::decodePoly(QString encoded) {
+
+	int index = 0, len = encoded.length();
+	int lat = 0, lng = 0;
+	while (index < len) {
+		int b, shift = 0, result = 0;
+		do {
+			b = encoded.at(index++).toAscii() - 63;
+			result |= (b & 0x1f) << shift;
+			shift += 5;
+		} while (b >= 0x20);
+		int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+		lat += dlat;
+		shift = 0;
+		result = 0;
+		do {
+			b = encoded.at(index++).toAscii() - 63;
+			result |= (b & 0x1f) << shift;
+			shift += 5;
+		} while (b >= 0x20);
+		int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+		lng += dlng;
+		QString valueAsStringlat = QString::number((double) lat / 1E5);
+		QString valueAsStringlng = QString::number((double) lng / 1E5);
+		decodedpolylat.append((double) lat / 1E5);
+		decodedpolylng.append((double) lng / 1E5);
+	}
+
+}
+/*
+ * Gets the geolocation data from address
+ * @param mpoiAddress address string to get geolocation data.
+ */
+
+void WebServicesAPI::myPOIgeoCodeData(QString mpoiAddress) {
+	m_active = true;
+	emit activeChanged();
+	QStringList serviceProviders =
+			QGeoServiceProvider::availableServiceProviders();
+
+	if (serviceProviders.size()) {
+		QGeoServiceProvider *serviceProvider =
+				new QtMobilitySubset::QGeoServiceProvider(
+						serviceProviders.at(0));
+		searchManager = serviceProvider->searchManager();
+	}
+	connect(searchManager, SIGNAL(finished(QGeoSearchReply*)), this,
+			SLOT(searchResults(QGeoSearchReply*)));
+	searchAddress.setText(mpoiAddress);
+
+	reply = searchManager->geocode(searchAddress);
+
+}
+void WebServicesAPI::searchResults(QGeoSearchReply *reply) {
+	QString lat;
+	QString lng;
+
+	m_active = false;
+	emit activeChanged();
+
+	lat = QString::number(reply->places().value(0).coordinate().latitude());
+	lng = QString::number(reply->places().value(0).coordinate().longitude());
+	qDebug() << "lat in searchResults is:" << lat;
+	qDebug() << "lng in searchResults is:" << lng;
+	qDebug() << "geocode from :" << mPOIFrom;
+	if (lat == "nan" || lng == "nan") {
+		hasResponse = false;
+		if (mPOIFrom == "searchOnMap") {
+			showMySystemDialog(tr("No Data Found"));
+			m_active = false;
+			emit activeChanged();
+		}
+	} else {
+		hasResponse = true;
+
+
+		reply->deleteLater();
+		mPOIdatalatng = lat + "," + lng;
+		if (mPOIFrom == "searchOnMap") {
+			drawPinOnMap("map_pin.png", lat + "," + lng, "temp", mPinTypeSingle,
+					NULL);
+		}
+	}
+	if (mPOIFrom == "searchDirection") {
+		emit poidataloaded();
+	}
+
+}
+/* convertes from geolocation data to get latitude,logitude,name etc...
+ */
+void WebServicesAPI::reverseGeoCode() {
+	m_active = true;
+	emit activeChanged();
+	QStringList serviceProviders =
+			QGeoServiceProvider::availableServiceProviders();
+	QGeoSearchManager* mGeoSearchManager;
+	if (serviceProviders.size()) {
+		QGeoServiceProvider *serviceProvider =
+				new QtMobilitySubset::QGeoServiceProvider(
+						serviceProviders.at(0));
+		mGeoSearchManager = serviceProvider->searchManager();
+	}
+	QGeoCoordinate mGeoCoordinate;
+	QString lat = getValueFor("currentLatitude", "25.271139");
+	QString lon = getValueFor("CurrentLongitude", "55.307485");
+	mGeoCoordinate.setLatitude(lat.toDouble());
+	mGeoCoordinate.setLongitude(lon.toDouble());
+	QGeoSearchReply *reply = mGeoSearchManager->reverseGeocode(mGeoCoordinate);
+
+	bool finished_connected = QObject::connect(mGeoSearchManager,
+			SIGNAL(finished(QGeoSearchReply*)), this,
+			SLOT(readReverseGeocode(QGeoSearchReply*)));
+	if (finished_connected) {
+	}
+	else {
+		m_active = false;
+		emit activeChanged();
+	}
+}
+/*
+ * Retrieve the geocoded values.
+ */
+void WebServicesAPI::readReverseGeocode(QGeoSearchReply *reply) {
+
+	m_active = false;
+	emit activeChanged();
+	QString address = reply->places().value(0).address().text();
+	mGetMyLocation = address;
+	if (mGetMyLocation.trimmed().length() > 0) {
+		emit getMyLocationDone();
+	} else {
+		QString lat = getValueFor("currentLatitude", "25.271139");
+		QString lon = getValueFor("CurrentLongitude", "55.307485");
+		getCoordinateConversion(lon, lat, "LATLNG", "DirectionMyLocation",
+				false);
+	}
+}
+QString WebServicesAPI::getMyLocation() {
+	return mGetMyLocation;
+}
+QString WebServicesAPI::getPOIlatlng() {
+
+	return mPOIdatalatng;
+}
+QString WebServicesAPI::getmapDataFromFocusId() {
+
+	return mapDataFromFocusId;
+
+}
+bool WebServicesAPI::hasGotResponse() {
+	return hasResponse;
+
+}
+void WebServicesAPI::SetPOISearch(bool is) {
+	isPOISearch = is;
+}
+bool WebServicesAPI::checkPOISearch() {
+	return isPOISearch;
+}
+void WebServicesAPI::setMulitple(QString labelMulitple) {
+	ismulipleLabel = labelMulitple;
+}
+
+QString WebServicesAPI::getMulitple() {
+	return ismulipleLabel;
+}
+/*
+ *drops pin on from place to desired place by checking the type of data.
+ *@param fromPlace Geolocation
+ *@param toPlace Geolocation
+ */
+
+void WebServicesAPI::drawpinOnDecodedPoly(QString fromPlace, QString toPlace) {
+	mMapData = new MapData();
+	Polyline mPolylineBuildingInfo;
+	mListPOIPrevious.clear();
+
+	for (qint64 i = 0; i < decodedpolylat.size(); i++) {
+		if (i == 0) {
+			QString mType = checkInvalid(fromPlace.replace(" ", ""));
+			QVariantMap mListdata;
+			mListdata["NAME_E"] = fromPlace;
+			mListdata["Location"] = fromPlace;
+			mListdata["X_COORD"] = decodedpolylat.value(i).toString();
+			mListdata["Y_COORD"] = decodedpolylng.value(i).toString();
+			mListdata["TEL_NO"] = "";
+			mListdata["FAX_NO"] = "";
+			mListdata["EMAIL"] = "";
+			mListdata["LICENSE_NO"] = "";
+			mListdata["URL"] = "";
+			mListdata["POBOX"] = "";
+
+			if (mType == "number")
+				drawPinOnMap("map_entrance.png",
+						decodedpolylat.value(i).toString() + ","
+								+ decodedpolylng.value(i).toString(), fromPlace,
+						mPinTypeMultiple, mListdata);
+			else
+				drawPinOnMap("map_pin.png",
+						decodedpolylat.value(i).toString() + ","
+								+ decodedpolylng.value(i).toString(), fromPlace,
+						mPinTypeMultiple, mListdata);
+
+			mListPOIPrevious.append(mListdata);
+		}
+		mPolylineBuildingInfo.append(
+				Coordinate(decodedpolylat.value(i).toDouble(),
+						decodedpolylng.value(i).toDouble()));
+	}
+	QVariantMap mListdataTO;
+	mListdataTO["NAME_E"] = toPlace;
+	mListdataTO["Location"] = toPlace;
+	mListdataTO["X_COORD"] =
+			decodedpolylat.value(decodedpolylat.size() - 1).toString();
+	mListdataTO["Y_COORD"] =
+			decodedpolylng.value(decodedpolylat.size() - 1).toString();
+	mListdataTO["TEL_NO"] = "";
+	mListdataTO["FAX_NO"] = "";
+	mListdataTO["EMAIL"] = "";
+	mListdataTO["LICENSE_NO"] = "";
+	mListdataTO["URL"] = "";
+	mListdataTO["POBOX"] = "";
+	mListPOIPrevious.append(mListdataTO);
+
+	QString mType = checkInvalid(toPlace.replace(" ", ""));
+
+	if (mType == "number") {
+		drawPinOnMap("map_entrance.png",
+				decodedpolylat.value(decodedpolylat.size() - 1).toString() + ","
+						+ decodedpolylng.value(decodedpolylat.size() - 1).toString(),
+				toPlace, mPinTypeMultiple, mListdataTO);
+	} else {
+		drawPinOnMap("map_pin.png",
+				decodedpolylat.value(decodedpolylat.size() - 1).toString() + ","
+						+ decodedpolylng.value(decodedpolylat.size() - 1).toString(),
+				toPlace, mPinTypeMultiple, mListdataTO);
+	}
+
+	GeoPolyline* mGeoPolygonBuildingInfo = new GeoPolyline();
+	mGeoPolygonBuildingInfo->setId("route_line");
+
+
+	mGeoPolygonBuildingInfo->setLine(mPolylineBuildingInfo);
+	StyleSheet styles;
+	Style polylines;
+	polylines.setEdgeSize(EdgeSize::Small);
+	polylines.setFillColor(0x00FF0000);
+	styles.addStyleForClass(mGeoPolygonBuildingInfo, polylines);
+	myMapView->mapData()->setStyles(styles);
+	myMapView->mapData()->add(mGeoPolygonBuildingInfo);
+
+	mMapData->add(mGeoPolygonBuildingInfo);
+	mPolylineData.clear();
+	setZoomLevelForMap(mMapData);
+}
+void WebServicesAPI::SetisPOITextChanging(bool isTextChanging) {
+	isPOITextChanging = isTextChanging;
+}
+
+void WebServicesAPI::showMySystemDialog(QString body) {
+	SystemDialog *dialog = new SystemDialog(tr("Ok"));
+
+	dialog->setBody(body);
+
+	dialog->setEmoticonsEnabled(true);
+
+	dialog->show();
+}
+/*
+ * call google api  from ae if isFirst is true otherwise from all over the world.
+ */
+void WebServicesAPI::callGoogleApi(QString data, bool isFirst) {
+	QNetworkAccessManager *manager = new QNetworkAccessManager(this);
+
+	connect(manager, SIGNAL(finished(QNetworkReply*)), this,
+			SLOT(replyFinishedGoolgeApi(QNetworkReply*)));
+	QString mURL;
+
+	if (isFirst) {
+		mURL = "https://maps.googleapis.com/maps/api/geocode/json?address="
+				+ data + "&sensor=false&components=country:ae";
+	} else {
+		mURL = "https://maps.googleapis.com/maps/api/geocode/json?address="
+				+ data + "&sensor=false";
+	}
+
+	manager->get(QNetworkRequest(QUrl(mURL)));
+
+}
+void WebServicesAPI::replyFinishedGoolgeApi(QNetworkReply* replyApi) {
+
+	QByteArray replyBytes = replyApi->readAll();
+	JsonDataAccess jda;
+
+	QVariant mRouteDataResponse = jda.loadFromBuffer(replyBytes);
+
+	QString lat =
+			mRouteDataResponse.toMap().value("results").toList().value(0).toMap().value(
+					"geometry").toMap().value("location").toMap().value("lat").toString();
+	QString lng =
+			mRouteDataResponse.toMap().value("results").toList().value(0).toMap().value(
+					"geometry").toMap().value("location").toMap().value("lng").toString();
+	QString isPartialMatch =
+			mRouteDataResponse.toMap().value("results").toList().value(0).toMap().value(
+					"partial_match").toString();
+
+	if (lat == "23.424076" && lng == "53.847818" && isPartialMatch.length() > 0
+			&& isPartialMatch == "true") {
+		callGoogleApi(myPOILabel, false);
+	} else {
+		if (lat == "nan" || lng == "nan") {
+			hasResponse = false;
+			if (mPOIFrom == "searchOnMap") {
+				showMySystemDialog(tr("No Data Found"));
+			}
+			m_active = false;
+			emit activeChanged();
+		} else {
+			hasResponse = true;
+
+			replyApi->deleteLater();
+			mPOIdatalatng = lat + "," + lng;
+			if (mPOIFrom == "searchOnMap") {
+				setPoiInfoData(myPOILabel, "", "", "", "", "", "");
+				GetBuildingOutLine_EntrancePoints(lat, lng, true, false);
+			}
+		}
+		if (mPOIFrom == "searchDirection") {
+			emit poidataloaded();
+		}
+	}
+}
+/*
+ * draws outline when user long pressed on geolocation on map based on location point.
+ * @param point location point when use long pressed location.
+ */
+void WebServicesAPI::longPressOnMap(bb::platform::geo::Point point) {
+	ClearMapdata();
+	setPoiInfoData("", "", "", "", "", "", "");
+	GetBuildingOutLine_EntrancePoints(QString::number(point.latitude()),
+			QString::number(point.longitude()), true, false);
+}

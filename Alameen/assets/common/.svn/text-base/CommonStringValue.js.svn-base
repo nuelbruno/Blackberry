@@ -1,0 +1,24 @@
+//Note: you only need '.pragma library' if you are planning to
+//change this variable from multiple qml files
+var user_registered = "User Registered";
+var network_status = "true";
+var network_not_available = "Connection not available";
+var network_available = "Connection available";
+var active = "Active";
+var inactive = "Inctive";
+var registering = "Registering..";
+var registered = "Registered";
+var un_registered = "Unregistered";
+var registered_failed = "Registered failed";
+var toast_message ="Start Application";
+var login = "Login";
+var done = "Done";
+var remember_me = "Remember Me";
+var save_user_name = "UserName";
+var save_user_passward = "Passward";
+var enter_user_passward = "Enter password";
+var enter_user_name = "Enter username";
+
+
+
+

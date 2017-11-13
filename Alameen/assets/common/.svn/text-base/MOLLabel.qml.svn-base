@@ -1,0 +1,13 @@
+import bb.cascades 1.0
+
+Label {
+    id: txtCommon
+    text: qsTr("") + Retranslate.onLanguageChanged
+    multiline: true
+    verticalAlignment: VerticalAlignment.Center
+    
+    textStyle {
+//        base: SystemDefaults.TextStyles.TitleText
+        fontSize: FontSize.Small
+    }
+}
